@@ -1,48 +1,59 @@
-import re
-from typing import Dict, List
-import httpx
-import os
-import asyncio
+import os, re, httpx, asyncio, yaml
+from typing import Dict, List, Any
 
-HA_URL = "http://supervisor/core"          # ← proxy root (NO /api here)
-TOKEN  = os.getenv("SUPERVISOR_TOKEN")
+HA_URL  = "http://supervisor/core"                     # proxy provided by Supervisor
+TOKEN   = os.getenv("SUPERVISOR_TOKEN")
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
-HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
+ENTITY_RE = re.compile(r"\b(?:sensor|binary_sensor|switch|input_\w+|number|device_tracker|light|climate)\.[\w\d_]+")
 
-ENTITY_REGEX = re.compile(r"\b(?:sensor|binary_sensor|switch|input_\w+|number)\.[\w\d_]+")
+# ---------- helpers -----------------------------------------------------------
 
-async def fetch_states() -> List[dict]:
+async def ha_get(path: str, *, json=False, ok_404=False) -> Any:
     async with httpx.AsyncClient() as client:
-        resp = await client.get(f"{HA_URL}/api/states", headers=HEADERS, timeout=30)
-        resp.raise_for_status()
-        return resp.json()
+        r = await client.get(f"{HA_URL}{path}", headers=HEADERS, timeout=30)
+        if ok_404 and r.status_code == 404:
+            return None
+        r.raise_for_status()
+        return r.json() if json else r.text
 
-async def fetch_automations() -> List[dict]:
-    states = await fetch_states()
-    return [s for s in states if s["entity_id"].startswith("automation.")]
+def deep_find_entity_ids(obj: Any) -> List[str]:
+    """Recursively walk any list/dict/str and return matching entity IDs."""
+    found: set[str] = set()
+    if isinstance(obj, str):
+        found.update(ENTITY_RE.findall(obj))
+    elif isinstance(obj, list):
+        for item in obj:
+            found.update(deep_find_entity_ids(item))
+    elif isinstance(obj, dict):
+        for val in obj.values():
+            found.update(deep_find_entity_ids(val))
+    return list(found)
 
-def extract_entities(yaml_str: str) -> List[str]:
-    return sorted(set(ENTITY_REGEX.findall(yaml_str or "")))
+# ---------- main builder ------------------------------------------------------
 
 async def build_map() -> Dict[str, dict]:
-    automations = await fetch_automations()
-    dep_map = {}
-    for auto in automations:
-        friendly = auto["attributes"].get("friendly_name", auto["entity_id"])
-        yaml_cfg = auto["attributes"].get("last_triggered_cfg") or auto["attributes"].get("source") or ""
-        entities = extract_entities(yaml_cfg)
-        dep_map[auto["entity_id"]] = {
-            "friendly_name": friendly,
-            "entities": entities,
-        }
-    return dep_map
-async def fetch_states():
-    async with httpx.AsyncClient() as client:
-        try:
-            r = await client.get(f"{HA_URL}/api/states", headers=HEADERS, timeout=30)
-            r.raise_for_status()
-            return r.json()
-        except httpx.HTTPStatusError as e:
-            print("❌ HA API error:", e.response.status_code, e.response.text[:100])
-            return []
+    states: List[dict] = await ha_get("/api/states", json=True)
+    automations = [s for s in states if s["entity_id"].startswith("automation.")]
+    dep: Dict[str, dict] = {}
+
+    for a in automations:
+        ent_id   = a["entity_id"]
+        slug     = ent_id.split(".", 1)[1]
+        friendly = a["attributes"].get("friendly_name", ent_id)
+
+        # 1. try full YAML via REST (works for UI + YAML automations)
+        yaml_text = await ha_get(f"/api/config/automation/config/{slug}", ok_404=True)
+        if yaml_text:
+            try:
+                yaml_obj = yaml.safe_load(yaml_text)
+                entities  = deep_find_entity_ids(yaml_obj)
+            except yaml.YAMLError:
+                entities = []
+        else:
+            # 2. fallback: scan the attributes dict
+            entities = deep_find_entity_ids(a["attributes"])
+
+        dep[ent_id] = {"friendly_name": friendly, "entities": sorted(set(entities))}
+
+    return dep
