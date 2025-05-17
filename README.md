@@ -28,7 +28,7 @@
 
 ## 📷 Screenshot
 *(Dark‑theme screenshot pending)*
-![Automation Inspector screenshot](automation_inspector\screenshots\screenshot-light.png)
+![Automation Inspector screenshot](automation_inspector\screenshot-light.png)
 
 ---
 
