@@ -13,7 +13,7 @@
 
 ## ✨ Key Features
 
-| Feature | MVP v0.3.2 |
+| Feature | MVP |
 |---------|-----------|
 | 🗺️ Dependency map | Lists **all automations** with the **entities they reference** (triggers, conditions & actions) |
 | 🔴 Health flags | Unavailable / unknown entities are coloured **red** |
@@ -41,11 +41,11 @@
 2. **Reload** the Store ➜ search for **Automation Inspector** ➜ **Install**.
 3. Click **Start**.  Open the Web UI (Ingress) or direct:
    ```
-   http://<HA-IP>:8123
+   http://<HA-IP>:1234
    ```
 
 > **Port note**  
-> The add‑on runs on **port 8123** inside Supervisor.  All internal links (Trace, entity more‑info) are rewritten to that port so they open the core HA UI – no 401 errors.
+> The add‑on runs on **port** inside Supervisor.  All internal links (Trace, entity more‑info) are rewritten to that port so they open the core HA UI – no 401 errors.
 
 ---
 
