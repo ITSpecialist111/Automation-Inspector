@@ -28,7 +28,7 @@
 
 ## 📷 Screenshot
 *(Dark‑theme screenshot pending)*
-![Automation Inspector screenshot](screenshots/screenshot-light.png)
+![Automation Inspector screenshot](automation_inspector\screenshots\screenshot-light.png)
 
 ---
 
@@ -41,11 +41,11 @@
 2. **Reload** the Store ➜ search for **Automation Inspector** ➜ **Install**.
 3. Click **Start**.  Open the Web UI (Ingress) or direct:
    ```
-   http://<HA-IP>:8234
+   http://<HA-IP>:8123
    ```
 
 > **Port note**  
-> The add‑on runs on **port 8234** inside Supervisor.  All internal links (Trace, entity more‑info) are rewritten to that port so they open the core HA UI – no 401 errors.
+> The add‑on runs on **port 8123** inside Supervisor.  All internal links (Trace, entity more‑info) are rewritten to that port so they open the core HA UI – no 401 errors.
 
 ---
 
