@@ -5,7 +5,8 @@
 <title>Automation Inspector</title>
 <style>
  body{font-family:sans-serif;margin:1rem}
- #banner{margin-bottom:.8rem;font-weight:600}
+ h1{margin:.2rem 0 1rem 0}
+ #banner{margin:.6rem 0;font-weight:600}
  table{border-collapse:collapse;width:100%}
  th,td{padding:.35rem .6rem;border-bottom:1px solid #ccc;vertical-align:top}
  thead th{position:sticky;top:0;background:#fff;z-index:1}
@@ -19,19 +20,20 @@
 </head>
 <body>
 
+<h1>Automation Inspector – Add-on</h1>
 <div id="banner">Loading…</div>
 <label>
   <input type="checkbox" id="errOnly"> show errors only
 </label>
 
 <table id="tbl">
- <thead>
-   <tr><th>Automation</th><th>Entities</th></tr>
- </thead>
+ <thead><tr><th>Automation</th><th>Entities</th></tr></thead>
  <tbody></tbody>
 </table>
 
 <script>
+const BASE = `${location.protocol}//${location.hostname}:8234`;   // main HA port
+
 let DATA={};
 
 async function fetchData(){
@@ -45,7 +47,7 @@ function render(){
   const errOnly=document.getElementById("errOnly").checked;
   let errCount=0, entCount=0, badEnts=0;
 
-  Object.entries(DATA).forEach(([aid,info])=>{
+  Object.values(DATA).forEach(info=>{
     const hasBad = info.entities.some(e=>!e.ok);
     if(errOnly && !hasBad) return;
 
@@ -53,13 +55,14 @@ function render(){
     if(!info.enabled) tr.classList.add("disabled");
 
     const trace = info.config_id
-        ? `<a href="/config/automation/edit/${info.config_id}" target="_blank">▶</a> `
+        ? `<a href="${BASE}/config/automation/edit/${info.config_id}" target="_blank">▶</a> `
         : "";
 
     const ents = info.entities.map(e=>{
       const cls = e.ok?"" :"bad";
+      const link = `${BASE}/developer-tools/state?entity_id=${e.id}`;
       if(!e.ok) badEnts++;
-      return `<a href="/developer-tools/state?entity_id=${e.id}" target="_blank">
+      return `<a href="${link}" target="_blank">
                 <code class="${cls}">${e.id}: ${e.state}</code>
               </a>`;
     }).join(" ");
@@ -67,7 +70,7 @@ function render(){
     entCount += info.entities.length;
     if(hasBad) errCount++;
 
-    tr.innerHTML = `<td>${trace}<code>${aid}</code><br>${info.friendly_name}</td>
+    tr.innerHTML = `<td>${trace}<strong>${info.friendly_name}</strong></td>
                     <td>${ents}</td>`;
     tbody.appendChild(tr);
   });
@@ -79,11 +82,7 @@ function render(){
                 : "all OK");
 }
 
-async function load(){
-  await fetchData();
-  render();
-}
-
+async function load(){await fetchData();render();}
 document.getElementById("errOnly").addEventListener("change",render);
 load();
 </script>
