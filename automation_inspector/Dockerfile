@@ -8,6 +8,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY run.sh .
+RUN chmod +x /app/run.sh
 COPY app/ ./app
 COPY www/ ./www
 
