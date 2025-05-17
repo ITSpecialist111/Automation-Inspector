@@ -5,34 +5,86 @@
 <title>Automation Inspector</title>
 <style>
  body{font-family:sans-serif;margin:1rem}
+ #banner{margin-bottom:.8rem;font-weight:600}
  table{border-collapse:collapse;width:100%}
- th,td{padding:.3rem .6rem;border-bottom:1px solid #ccc;vertical-align:top}
- tr:nth-child(even){background:#f7f7f7}
- code{background:#eee;padding:2px 4px;border-radius:4px;margin-right:4px;display:inline-block}
- code.bad{background:#fdd;color:#900;border:1px solid #d66}
+ th,td{padding:.35rem .6rem;border-bottom:1px solid #ccc;vertical-align:top}
+ thead th{position:sticky;top:0;background:#fff;z-index:1}
+ tr:nth-child(even){background:#fafafa}
+ tr.disabled td:first-child{color:#777}
+ code{background:#f5f5f5;border:1px solid #ccc;
+      padding:2px 4px;border-radius:4px;margin:2px 3px 2px 0;display:inline-block}
+ code.bad{background:#fdd;color:#900;border-color:#d66}
+ button{margin-left:1rem}
 </style>
 </head>
 <body>
-<h2>Automation Inspector</h2>
+
+<div id="banner">Loading…</div>
+<label>
+  <input type="checkbox" id="errOnly"> show errors only
+</label>
+
 <table id="tbl">
- <thead><tr><th>Automation</th><th>Entities</th></tr></thead><tbody></tbody>
+ <thead>
+   <tr><th>Automation</th><th>Entities</th></tr>
+ </thead>
+ <tbody></tbody>
 </table>
 
 <script>
-async function load(){
-  const resp = await fetch("/dependency_map.json");
-  const data = await resp.json();
+let DATA={};
+
+async function fetchData(){
+  const r = await fetch("/dependency_map.json");
+  DATA = await r.json();
+}
+
+function render(){
   const tbody=document.querySelector("#tbl tbody");
-  Object.entries(data).forEach(([auto,info])=>{
+  tbody.innerHTML="";
+  const errOnly=document.getElementById("errOnly").checked;
+  let errCount=0, entCount=0, badEnts=0;
+
+  Object.entries(DATA).forEach(([aid,info])=>{
+    const hasBad = info.entities.some(e=>!e.ok);
+    if(errOnly && !hasBad) return;
+
     const tr=document.createElement("tr");
+    if(!info.enabled) tr.classList.add("disabled");
+
+    const trace = info.config_id
+        ? `<a href="/config/automation/edit/${info.config_id}" target="_blank">▶</a> `
+        : "";
+
     const ents = info.entities.map(e=>{
-      const cls = e.ok ? "" : "bad";
-      return `<code class="${cls}">${e.id}: ${e.state}</code>`;
+      const cls = e.ok?"" :"bad";
+      if(!e.ok) badEnts++;
+      return `<a href="/developer-tools/state?entity_id=${e.id}" target="_blank">
+                <code class="${cls}">${e.id}: ${e.state}</code>
+              </a>`;
     }).join(" ");
-    tr.innerHTML=`<td><code>${auto}</code><br>${info.friendly_name}</td><td>${ents}</td>`;
+
+    entCount += info.entities.length;
+    if(hasBad) errCount++;
+
+    tr.innerHTML = `<td>${trace}<code>${aid}</code><br>${info.friendly_name}</td>
+                    <td>${ents}</td>`;
     tbody.appendChild(tr);
   });
+
+  const autoTotal = Object.keys(DATA).length;
+  document.getElementById("banner").textContent =
+    `${autoTotal} automations · ${entCount} entities — `
+    + (errCount ? `${errCount} automations with issues, ${badEnts} bad entities`
+                : "all OK");
 }
+
+async function load(){
+  await fetchData();
+  render();
+}
+
+document.getElementById("errOnly").addEventListener("change",render);
 load();
 </script>
 </body>

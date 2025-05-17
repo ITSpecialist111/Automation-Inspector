@@ -1,5 +1,9 @@
 """
-dependency_map.py – build { automation ➜ [ {id,state,ok} … ] } map
+dependency_map.py – builds the JSON served at /dependency_map.json
+
+Adds for v0.3.1:
+  • 'enabled'   – True/False automation state
+  • 'config_id' – numeric id used by /config/automation/edit/<id> (Trace button)
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ async def ha_get(path: str, *, json: bool = False) -> Any | None:
         r.raise_for_status()
         return r.json() if json else r.text
 
+
 def collect_entities(obj: Any) -> List[str]:
     found: set[str] = set()
     if obj is None:
@@ -31,11 +36,11 @@ def collect_entities(obj: Any) -> List[str]:
     if isinstance(obj, str):
         found.update(ENTITY_RE.findall(obj))
     elif isinstance(obj, list):
-        for i in obj:
-            found.update(collect_entities(i))
+        for item in obj:
+            found.update(collect_entities(item))
     elif isinstance(obj, dict):
-        for v in obj.values():
-            found.update(collect_entities(v))
+        for val in obj.values():
+            found.update(collect_entities(val))
     return list(found)
 
 # ---------------------------------------------------------------- main
@@ -48,33 +53,33 @@ async def build_map() -> Dict[str, dict]:
     for st in autos:
         ent_id = st["entity_id"]
         nice   = st["attributes"].get("friendly_name", ent_id)
-        numeric_id = st["attributes"].get("id")
-        yaml_txt = None
+        enabled = st["state"] == "on"
 
-        if numeric_id:
-            yaml_txt = await ha_get(f"/api/config/automation/config/{numeric_id}")
-        if yaml_txt is None:
+        config_id = st["attributes"].get("id")            # numeric id
+        yaml_txt  = None
+
+        if config_id:
+            yaml_txt = await ha_get(f"/api/config/automation/config/{config_id}")
+        if yaml_txt is None:                              # fallback by slug
             slug = ent_id.split(".", 1)[1]
             yaml_txt = await ha_get(f"/api/config/automation/config/{slug}")
 
-        if yaml_txt:
-            try:
-                yaml_obj = yaml.safe_load(yaml_txt) or {}
-                ids = collect_entities(yaml_obj)
-            except yaml.YAMLError:
-                ids = []
-        else:
-            ids = collect_entities(st["attributes"])
+        ids = collect_entities(yaml.safe_load(yaml_txt) or {}) if yaml_txt else \
+              collect_entities(st["attributes"])
 
-        # build rich entity list with state + ok flag
-        rich: List[dict] = []
+        entities = []
         for eid in sorted(set(ids)):
             row   = state_map.get(eid)
             state = row["state"] if row else "unavailable"
             ok    = state not in ("unavailable", "unknown")
-            rich.append({"id": eid, "state": state, "ok": ok})
+            entities.append({"id": eid, "state": state, "ok": ok})
 
-        dep[ent_id] = {"friendly_name": nice, "entities": rich}
+        dep[ent_id] = {
+            "friendly_name": nice,
+            "enabled": enabled,
+            "config_id": config_id,
+            "entities": entities,
+        }
 
     print("▶ built map with", len(dep), "automations")
     return dep
