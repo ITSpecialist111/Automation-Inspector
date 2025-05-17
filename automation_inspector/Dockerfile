@@ -5,11 +5,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY run.sh /app/run.sh
-RUN chmod 0755 /app/run.sh
-
 COPY app/ /app/app
 COPY www/ /app/www
 
 EXPOSE 1234
-ENTRYPOINT ["/app/run.sh"]
+ENTRYPOINT ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "1234"]
