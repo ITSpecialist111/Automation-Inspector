@@ -4,8 +4,8 @@ import httpx
 import os
 import asyncio
 
-HA_URL = "http://homeassistant:8123"
-TOKEN  = os.getenv("SUPERVISOR_TOKEN")   # injected by Supervisor
++HA_URL = "http://supervisor/core/api"          # proxy provided by Supervisor
++TOKEN  = os.getenv("SUPERVISOR_TOKEN")         # valid for that proxy
 
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
