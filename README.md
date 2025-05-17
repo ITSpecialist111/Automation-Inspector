@@ -11,6 +11,10 @@
 ---
 ## Important note: if you are using a proxy to access HASS this may not report correctly because of HASS security. Use internal IP address to access.
 
+## Bug found 🐛 
+## Navigate to: 
+## e.g Https://homeassistant:1234
+
 ## ✨ Key Features
 
 | Feature | MVP |
