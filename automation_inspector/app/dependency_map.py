@@ -1,23 +1,12 @@
 """
-dependency_map.py  –  Build {automation ➜ entities} map
-
-Works for:
-  • UI automations   (fetch by attributes.id)
-  • YAML automations (same id also present)
-Falls back to state attributes when /config API is blocked.
+dependency_map.py – build { automation ➜ [ {id,state,ok} … ] } map
 """
 
 from __future__ import annotations
-
-import os
-import re
+import os, re, yaml, httpx
 from typing import Any, Dict, List
 
-import httpx
-import yaml
-
-# ----------------------------------------------------------------- constants
-HA_URL  = "http://supervisor/core"                 # Supervisor proxy to HA
+HA_URL  = "http://supervisor/core"
 TOKEN   = os.getenv("SUPERVISOR_TOKEN")
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
@@ -26,12 +15,8 @@ ENTITY_RE = re.compile(
     r"input_\w+|device_tracker)\.[0-9A-Za-z_]+\b"
 )
 
-# ----------------------------------------------------------------- helpers
+# ---------------------------------------------------------------- helpers
 async def ha_get(path: str, *, json: bool = False) -> Any | None:
-    """
-    GET <HA_URL><path> via Supervisor proxy.
-    403 / 404 → return None so caller can fall back gracefully.
-    """
     async with httpx.AsyncClient() as cli:
         r = await cli.get(f"{HA_URL}{path}", headers=HEADERS, timeout=30)
         if r.status_code in (403, 404):
@@ -39,67 +24,57 @@ async def ha_get(path: str, *, json: bool = False) -> Any | None:
         r.raise_for_status()
         return r.json() if json else r.text
 
-
 def collect_entities(obj: Any) -> List[str]:
-    """Recursively collect entity_ids from str / list / dict."""
     found: set[str] = set()
-
     if obj is None:
         return []
-
     if isinstance(obj, str):
         found.update(ENTITY_RE.findall(obj))
-
     elif isinstance(obj, list):
-        for item in obj:
-            found.update(collect_entities(item))
-
+        for i in obj:
+            found.update(collect_entities(i))
     elif isinstance(obj, dict):
-        for key, val in obj.items():
-            # Explicitly follow 'entity_id' keys, but also walk every value
-            found.update(collect_entities(val))
-
+        for v in obj.values():
+            found.update(collect_entities(v))
     return list(found)
 
-# ----------------------------------------------------------------- main
+# ---------------------------------------------------------------- main
 async def build_map() -> Dict[str, dict]:
-    states = await ha_get("/api/states", json=True) or []
-    autos  = [s for s in states if s["entity_id"].startswith("automation.")]
+    states_raw = await ha_get("/api/states", json=True) or []
+    state_map  = {row["entity_id"]: row for row in states_raw}
+    autos      = [s for s in states_raw if s["entity_id"].startswith("automation.")]
     dep: Dict[str, dict] = {}
 
     for st in autos:
-        ent_id = st["entity_id"]                     # automation.dishwasher_status_yes
+        ent_id = st["entity_id"]
         nice   = st["attributes"].get("friendly_name", ent_id)
+        numeric_id = st["attributes"].get("id")
+        yaml_txt = None
 
-        # Use the internal numeric id when available – required for UI automations
-        numeric_id = st["attributes"].get("id")      # e.g. 1684872402573
-        yaml_txt   = None
-
-        if numeric_id is not None:
+        if numeric_id:
             yaml_txt = await ha_get(f"/api/config/automation/config/{numeric_id}")
-
-        # If that failed (rare) try the old slug fallback
         if yaml_txt is None:
-            slug = ent_id.split(".", 1)[1]           # dishwasher_status_yes
+            slug = ent_id.split(".", 1)[1]
             yaml_txt = await ha_get(f"/api/config/automation/config/{slug}")
 
-        # ---------------------------------------------------------------- parse
         if yaml_txt:
             try:
                 yaml_obj = yaml.safe_load(yaml_txt) or {}
-                entities = collect_entities(yaml_obj)
-                print(f"yaml OK   – {numeric_id or slug:<15} ({len(entities)} entities)")
+                ids = collect_entities(yaml_obj)
             except yaml.YAMLError:
-                entities = []
+                ids = []
         else:
-            # Fall back to attributes of state object (very limited info)
-            entities = collect_entities(st["attributes"])
-            print(f"yaml miss → {nice:<40} ({len(entities)} entities)")
+            ids = collect_entities(st["attributes"])
 
-        dep[ent_id] = {
-            "friendly_name": nice,
-            "entities": sorted(set(entities)),
-        }
+        # build rich entity list with state + ok flag
+        rich: List[dict] = []
+        for eid in sorted(set(ids)):
+            row   = state_map.get(eid)
+            state = row["state"] if row else "unavailable"
+            ok    = state not in ("unavailable", "unknown")
+            rich.append({"id": eid, "state": state, "ok": ok})
+
+        dep[ent_id] = {"friendly_name": nice, "entities": rich}
 
     print("▶ built map with", len(dep), "automations")
     return dep
