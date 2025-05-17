@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Automation Inspector</title>
+  <style>
+    body { font-family: sans-serif; margin: 1rem; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { padding: .3rem .6rem; border-bottom: 1px solid #ccc; }
+    tr:nth-child(even) { background: #f7f7f7; }
+    code { background: #eee; padding: 2px 4px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+<h2>Automation Inspector</h2>
+<table id="tbl">
+  <thead><tr><th>Automation</th><th>Entities</th></tr></thead>
+  <tbody></tbody>
+</table>
+<script>
+async function load() {
+  const resp = await fetch("/dependency_map.json");
+  const data = await resp.json();
+  const tbody = document.querySelector("#tbl tbody");
+  Object.entries(data).forEach(([auto, info]) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td><code>${auto}</code><br>${info.friendly_name}</td>
+                    <td>${info.entities.map(e => `<code>${e}</code>`).join(", ")}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+load();
+</script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "name": "Automation Inspector",
+  "version": "0.1.0",
+  "slug": "automation_inspector",
+  "description": "Shows each automation with the sensors it depends on",
+  "url": "https://github.com/ITSpecialist111/Automation-Inspector",
+  "arch": ["aarch64", "amd64", "armv7"],
+  "startup": "application",
+  "boot": "auto",
+  "ingress": true,
+  "ingress_port": 1234,
+  "panel_icon": "mdi:robot-industrial",
+  "panel_title": "Automation Inspector",
+  "ports": {
+    "1234/tcp": 1234
+  },
+  "options": {},
+  "schema": {}
+}
