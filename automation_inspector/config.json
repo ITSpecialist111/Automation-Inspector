@@ -1,6 +1,6 @@
 {
   "name": "Automation Inspector",
-  "version": "0.1.2",         
+  "version": "0.1.4",         
   "slug": "automation_inspector",
   "description": "Shows each automation with the sensors it depends on",
   "url": "https://github.com/ITSpecialist111/Automation-Inspector",
@@ -11,6 +11,7 @@
   "ingress_port": 1234,
   "panel_icon": "mdi:robot-industrial",
   "panel_title": "Automation Inspector",
+  "homeassistant_api": true,
   "ports": {
     "1234/tcp": 1234
   },

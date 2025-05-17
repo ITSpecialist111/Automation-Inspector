@@ -4,8 +4,9 @@ import httpx
 import os
 import asyncio
 
-HA_URL = "http://supervisor/core/api"          # proxy provided by Supervisor
-TOKEN  = os.getenv("SUPERVISOR_TOKEN")         # valid for that proxy
+HA_URL = "http://supervisor/core"          # ← proxy root (NO /api here)
+TOKEN  = os.getenv("SUPERVISOR_TOKEN")
+HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
@@ -36,3 +37,12 @@ async def build_map() -> Dict[str, dict]:
             "entities": entities,
         }
     return dep_map
+async def fetch_states():
+    async with httpx.AsyncClient() as client:
+        try:
+            r = await client.get(f"{HA_URL}/api/states", headers=HEADERS, timeout=30)
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPStatusError as e:
+            print("❌ HA API error:", e.response.status_code, e.response.text[:100])
+            return []
