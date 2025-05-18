@@ -4,6 +4,15 @@
   <meta charset="utf-8">
   <title>Automation Inspector</title>
   <style>
+    /* ──────────────────────────────────────────────────────── */
+    /* Force white text in dark mode so links/code remain visible */
+    @media (prefers-color-scheme: dark) {
+      body, a, code {
+        color: #fff !important;
+      }
+    }
+    /* ──────────────────────────────────────────────────────── */
+
     :root {
       --bg-body: var(--primary-background-color);
       --text-primary: var(--primary-text-color);
