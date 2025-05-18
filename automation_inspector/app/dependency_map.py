@@ -4,6 +4,9 @@ dependency_map.py – builds the JSON served at /dependency_map.json
 Adds for v0.3.1:
   • 'enabled'   – True/False automation state
   • 'config_id' – numeric id used by /config/automation/edit/<id> (Trace button)
+
+v0.3.4 change:
+  • suppress false-positive “entities” (services, non-existent IDs)
 """
 
 from __future__ import annotations
@@ -51,10 +54,9 @@ async def build_map() -> Dict[str, dict]:
     dep: Dict[str, dict] = {}
 
     for st in autos:
-        ent_id = st["entity_id"]
-        nice   = st["attributes"].get("friendly_name", ent_id)
-        enabled = st["state"] == "on"
-
+        ent_id   = st["entity_id"]
+        nice     = st["attributes"].get("friendly_name", ent_id)
+        enabled  = (st["state"] == "on")
         config_id = st["attributes"].get("id")            # numeric id
         yaml_txt  = None
 
@@ -64,21 +66,33 @@ async def build_map() -> Dict[str, dict]:
             slug = ent_id.split(".", 1)[1]
             yaml_txt = await ha_get(f"/api/config/automation/config/{slug}")
 
-        ids = collect_entities(yaml.safe_load(yaml_txt) or {}) if yaml_txt else \
-              collect_entities(st["attributes"])
+        # extract raw IDs from YAML or attributes
+        if yaml_txt:
+            try:
+                ids = collect_entities(yaml.safe_load(yaml_txt) or {})
+            except yaml.YAMLError:
+                ids = []
+        else:
+            ids = collect_entities(st["attributes"])
 
-        entities = []
-        for eid in sorted(set(ids)):
-            row   = state_map.get(eid)
-            state = row["state"] if row else "unavailable"
+        # build rich entity list with state + ok flag,
+        # suppress false positives (services, non-existent IDs)
+        rich: List[dict] = []
+        seen = set()
+        for eid in sorted(ids):
+            if eid in seen or eid not in state_map:
+                continue
+            seen.add(eid)
+            row   = state_map[eid]
+            state = row["state"]
             ok    = state not in ("unavailable", "unknown")
-            entities.append({"id": eid, "state": state, "ok": ok})
+            rich.append({"id": eid, "state": state, "ok": ok})
 
         dep[ent_id] = {
             "friendly_name": nice,
             "enabled": enabled,
             "config_id": config_id,
-            "entities": entities,
+            "entities": rich,
         }
 
     print("▶ built map with", len(dep), "automations")
