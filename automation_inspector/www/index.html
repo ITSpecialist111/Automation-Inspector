@@ -5,13 +5,12 @@
   <title>Automation Inspector</title>
   <style>
     :root {
-      --bg-body: var(--sidebar-background-color, var(--primary-background-color));
+      --bg-body: var(--primary-background-color);
       --text-primary: var(--primary-text-color);
       --text-disabled: var(--disabled-text-color, #888);
       --card-bg: var(--card-background-color);
       --divider: var(--divider-color);
-      --code-bg: var(--secondary-background-color);
-      --code-border: var(--divider-color);
+      --code-bg: var(--card-background-color);
       --error-bg: var(--error-color-container, #fdd);
       --error-text: var(--error-color, #900);
     }
@@ -53,17 +52,24 @@
     }
     code {
       background: var(--code-bg);
-      border: 1px solid var(--code-border);
+      border: 1px solid var(--divider);
       padding: 2px 4px;
       border-radius: 4px;
       margin: 2px 3px 2px 0;
       display: inline-block;
-      color: var(--primary-text-color);
+      color: var(--text-primary);
     }
     code.bad {
       background: var(--error-bg);
       color: var(--error-text);
       border-color: var(--error-text);
+    }
+    a {
+      color: var(--primary-text-color);
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
     }
     input[type="checkbox"] {
       margin-right: .3rem;
