@@ -45,11 +45,11 @@ See [RELEASE_NOTES.md](RELEASE_NOTES.md) for full changelog.
 2. **Reload** the Store ➜ search for **Automation Inspector** ➜ **Install**.
 3. Click **Start**.  Open the Web UI via Ingress or direct:
    ```
-   http://<HA-IP>:8234
+   http://<HA-IP>:1234
    ```
 
 > **Port note**  
-> The add‑on runs on **port 8234** inside Supervisor. All internal links are rewritten to that port to open the core HA UI.
+> The add‑on runs on **port 1234** inside Supervisor. All internal links are rewritten to that port to open the core HA UI.
 
 ---
 
