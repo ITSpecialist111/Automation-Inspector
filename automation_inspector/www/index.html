@@ -4,22 +4,13 @@
   <meta charset="utf-8">
   <title>Automation Inspector</title>
   <style>
-    /* ──────────────────────────────────────────────────────── */
-    /* Force white text in dark mode so links/code remain visible */
-    @media (prefers-color-scheme: dark) {
-      body, a, code {
-        color: #fff !important;
-      }
-    }
-    /* ──────────────────────────────────────────────────────── */
-
     :root {
       --bg-body: var(--primary-background-color);
       --text-primary: var(--primary-text-color);
       --text-disabled: var(--disabled-text-color, #888);
       --card-bg: var(--card-background-color);
+      --secondary-bg: var(--secondary-background-color);
       --divider: var(--divider-color);
-      --code-bg: var(--card-background-color);
       --error-bg: var(--error-color-container, #fdd);
       --error-text: var(--error-color, #900);
     }
@@ -54,13 +45,13 @@
       z-index: 1;
     }
     tr:nth-child(even) {
-      background: var(--secondary-background-color);
+      background: var(--secondary-bg);
     }
     tr.disabled td:first-child {
       color: var(--text-disabled);
     }
     code {
-      background: var(--code-bg);
+      background: var(--secondary-bg);
       border: 1px solid var(--divider);
       padding: 2px 4px;
       border-radius: 4px;
@@ -101,7 +92,13 @@
 </table>
 
 <script>
-let DATA={};
+let DATA = {};
+
+// Detect Ingress vs direct
+const isIngress = window.location.pathname.includes('/api/hassio_ingress');
+const HA_BASE = isIngress
+  ? ''                                       // relative links under Ingress
+  : `${location.protocol}//${location.hostname}:8123`;  // direct HA Core
 
 async function fetchData(){
   const resp = await fetch('dependency_map.json');
@@ -114,20 +111,21 @@ function render(){
   const errOnly = document.getElementById("errOnly").checked;
   let errCount=0, entCount=0, badEnts=0;
 
-  Object.values(DATA).forEach(info=>{
-    const hasBad = info.entities.some(e=>!e.ok);
+  Object.values(DATA).forEach(info => {
+    const hasBad = info.entities.some(e => !e.ok);
     if (errOnly && !hasBad) return;
 
     const tr = document.createElement("tr");
     if (!info.enabled) tr.classList.add("disabled");
 
+    // Trace link to HA Core config UI
     const trace = info.config_id
-      ? `<a href="/config/automation/edit/${info.config_id}" target="_blank">▶</a> `
+      ? `<a href="${HA_BASE}/config/automation/edit/${info.config_id}" target="_blank">▶</a> `
       : "";
 
-    const ents = info.entities.map(e=>{
-      const cls = e.ok? "" : "bad";
-      const link = `/developer-tools/state?entity_id=${encodeURIComponent(e.id)}`;
+    const ents = info.entities.map(e => {
+      const cls = e.ok ? "" : "bad";
+      const link = `${HA_BASE}/developer-tools/state?entity_id=${encodeURIComponent(e.id)}`;
       if (!e.ok) badEnts++;
       return `<a href="${link}" target="_blank">
                 <code class="${cls}">${e.id}: ${e.state}</code>
