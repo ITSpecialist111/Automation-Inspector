@@ -4,81 +4,94 @@
   <meta charset="utf-8">
   <title>Automation Inspector</title>
   <style>
-    :root {
-      --bg-body: var(--primary-background-color);
-      --text-primary: var(--primary-text-color);
-      --text-disabled: var(--disabled-text-color, #888);
-      --card-bg: var(--card-background-color);
-      --secondary-bg: var(--secondary-background-color);
-      --divider: var(--divider-color);
-      --error-bg: var(--error-color-container, #fdd);
-      --error-text: var(--error-color, #900);
-    }
-
-    /* Force HA text color on all text/links/code (except .bad) */
-    body { color: var(--primary-text-color) !important; }
-    a { color: var(--primary-text-color) !important; }
-    code:not(.bad) { color: var(--primary-text-color) !important; }
-
+    /* Base (Light Mode) */
     body {
       font-family: var(--font-family, sans-serif);
       margin: 1rem;
-      background: var(--bg-body);
-    }
-    h1 {
-      margin: .2rem 0 1rem 0;
-    }
-    #banner {
-      margin: .6rem 0;
-      font-weight: 600;
+      background-color: white;
+      color: black;
     }
     table {
       border-collapse: collapse;
       width: 100%;
-      background: var(--card-bg);
+      background: #fff;
     }
     th, td {
       padding: .35rem .6rem;
-      border-bottom: 1px solid var(--divider);
+      border-bottom: 1px solid #ccc;
       vertical-align: top;
-    }
-    thead th {
-      position: sticky;
-      top: 0;
-      background: var(--card-bg);
-      z-index: 1;
+      color: black;
     }
     tr:nth-child(even) {
-      background: var(--secondary-bg);
-    }
-    tr.disabled td:first-child {
-      color: var(--text-disabled);
+      background: #f7f7f7;
     }
     code {
-      background: var(--secondary-bg);
-      border: 1px solid var(--divider);
+      background: #eee;
+      border: 1px solid #ccc;
       padding: 2px 4px;
       border-radius: 4px;
       margin: 2px 3px 2px 0;
       display: inline-block;
+      color: black;
     }
     code.bad {
-      background: var(--error-bg);
-      color: var(--error-text);
-      border-color: var(--error-text);
+      background: #fdd;
+      color: #900;
+      border-color: #d66;
     }
-    input[type="checkbox"] {
-      margin-right: .3rem;
+    a {
+      color: black;
+      text-decoration: none;
     }
+    a:hover {
+      text-decoration: underline;
+    }
+
+    /* Dark Mode Overrides */
+    .dark-mode body,
+    .dark-mode th,
+    .dark-mode td,
+    .dark-mode code,
+    .dark-mode a {
+      background-color: #222 !important;
+      color: #fff !important;
+      border-color: #555 !important;
+    }
+    .dark-mode table {
+      background: #333 !important;
+    }
+    .dark-mode tr:nth-child(even) {
+      background: #2a2a2a !important;
+    }
+    .dark-mode code {
+      background: #444 !important;
+    }
+    .dark-mode code.bad {
+      background: #600 !important;
+      color: #fdd !important;
+      border-color: #a33 !important;
+    }
+
+    /* Other styling */
+    h1 { margin: .2rem 0 1rem 0 }
+    #banner { margin: .6rem 0; font-weight: 600 }
+    thead th {
+      position: sticky; top: 0; background: inherit; z-index: 1;
+    }
+    tr.disabled td:first-child { opacity: .6; }
+    label, button { margin-right: 1rem; }
   </style>
 </head>
 <body>
 
 <h1>Automation Inspector – Add-on</h1>
+
 <div id="banner">Loading…</div>
+
 <label>
   <input type="checkbox" id="errOnly"> show errors only
 </label>
+<button id="toggleDark">Toggle Dark Mode</button>
 
 <table id="tbl">
   <thead>
@@ -88,70 +101,80 @@
 </table>
 
 <script>
-let DATA = {};
+  let DATA = {};
 
-// Ingress detection vs direct
-const isIngress = window.location.pathname.includes('/api/hassio_ingress');
-const HA_BASE = isIngress
-  ? ''  // relative under ingress
-  : `${location.protocol}//${location.hostname}:8123`;
+  // Detect Ingress vs direct
+  const isIngress = window.location.pathname.includes('/api/hassio_ingress');
+  const HA_BASE = isIngress
+    ? ''
+    : `${location.protocol}//${location.hostname}:8123`;
 
-async function fetchData(){
-  const resp = await fetch('dependency_map.json');
-  DATA = await resp.json();
-}
+  async function fetchData(){
+    const resp = await fetch('dependency_map.json');
+    DATA = await resp.json();
+  }
 
-function render(){
-  const tbody = document.querySelector("#tbl tbody");
-  tbody.innerHTML = "";
-  const errOnly = document.getElementById("errOnly").checked;
-  let errCount=0, entCount=0, badEnts=0;
+  function render(){
+    const tbody = document.querySelector("#tbl tbody");
+    tbody.innerHTML = "";
+    const errOnly = document.getElementById("errOnly").checked;
+    let errCount=0, entCount=0, badEnts=0;
 
-  Object.values(DATA).forEach(info => {
-    const hasBad = info.entities.some(e => !e.ok);
-    if (errOnly && !hasBad) return;
+    Object.values(DATA).forEach(info => {
+      const hasBad = info.entities.some(e => !e.ok);
+      if (errOnly && !hasBad) return;
 
-    const tr = document.createElement("tr");
-    if (!info.enabled) tr.classList.add("disabled");
+      const tr = document.createElement("tr");
+      if (!info.enabled) tr.classList.add("disabled");
 
-    const trace = info.config_id
-      ? `<a href="${HA_BASE}/config/automation/edit/${info.config_id}" target="_blank">▶</a> `
-      : "";
+      const trace = info.config_id
+        ? `<a href="${HA_BASE}/config/automation/edit/${info.config_id}" target="_blank">▶</a> `
+        : "";
 
-    const ents = info.entities.map(e => {
-      const cls = e.ok ? "" : "bad";
-      const link = `${HA_BASE}/developer-tools/state?entity_id=${encodeURIComponent(e.id)}`;
-      if (!e.ok) badEnts++;
-      return `<a href="${link}" target="_blank">
-                <code class="${cls}">${e.id}: ${e.state}</code>
-              </a>`;
-    }).join(" ");
+      const ents = info.entities.map(e => {
+        const cls = e.ok ? "" : "bad";
+        const link = `${HA_BASE}/developer-tools/state?entity_id=${encodeURIComponent(e.id)}`;
+        if (!e.ok) badEnts++;
+        return `<a href="${link}" target="_blank">
+                  <code class="${cls}">${e.id}: ${e.state}</code>
+                </a>`;
+      }).join(" ");
 
-    entCount += info.entities.length;
-    if (hasBad) errCount++;
+      entCount += info.entities.length;
+      if (hasBad) errCount++;
 
-    tr.innerHTML = `
-      <td>${trace}<strong>${info.friendly_name}</strong></td>
-      <td>${ents}</td>
-    `;
-    tbody.appendChild(tr);
+      tr.innerHTML = `
+        <td>${trace}<strong>${info.friendly_name}</strong></td>
+        <td>${ents}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    const autoTotal = Object.keys(DATA).length;
+    document.getElementById("banner").textContent =
+      `${autoTotal} automations · ${entCount} entities — `
+      + (errCount
+          ? `${errCount} automations with issues, ${badEnts} bad entities`
+          : `all OK`);
+  }
+
+  async function load(){
+    await fetchData();
+    render();
+  }
+
+  document.getElementById("errOnly").addEventListener("change", render);
+  document.getElementById("toggleDark").addEventListener("click", ()=>{
+    document.documentElement.classList.toggle('dark-mode');
+    localStorage.setItem('dark-mode', document.documentElement.classList.contains('dark-mode'));
   });
 
-  const autoTotal = Object.keys(DATA).length;
-  document.getElementById("banner").textContent =
-    `${autoTotal} automations · ${entCount} entities — `
-    + (errCount
-        ? `${errCount} automations with issues, ${badEnts} bad entities`
-        : `all OK`);
-}
+  // Apply stored preference
+  if (localStorage.getItem('dark-mode') === 'true') {
+    document.documentElement.classList.add('dark-mode');
+  }
 
-async function load(){
-  await fetchData();
-  render();
-}
-
-document.getElementById("errOnly").addEventListener("change", render);
-load();
+  load();
 </script>
 </body>
 </html>
