@@ -15,11 +15,15 @@
       --error-text: var(--error-color, #900);
     }
 
+    /* Force HA text color on all text/links/code (except .bad) */
+    body { color: var(--primary-text-color) !important; }
+    a { color: var(--primary-text-color) !important; }
+    code:not(.bad) { color: var(--primary-text-color) !important; }
+
     body {
       font-family: var(--font-family, sans-serif);
       margin: 1rem;
       background: var(--bg-body);
-      color: var(--text-primary);
     }
     h1 {
       margin: .2rem 0 1rem 0;
@@ -57,19 +61,11 @@
       border-radius: 4px;
       margin: 2px 3px 2px 0;
       display: inline-block;
-      color: var(--text-primary);
     }
     code.bad {
       background: var(--error-bg);
       color: var(--error-text);
       border-color: var(--error-text);
-    }
-    a {
-      color: var(--primary-text-color);
-      text-decoration: none;
-    }
-    a:hover {
-      text-decoration: underline;
     }
     input[type="checkbox"] {
       margin-right: .3rem;
@@ -94,11 +90,11 @@
 <script>
 let DATA = {};
 
-// Detect Ingress vs direct
+// Ingress detection vs direct
 const isIngress = window.location.pathname.includes('/api/hassio_ingress');
 const HA_BASE = isIngress
-  ? ''                                       // relative links under Ingress
-  : `${location.protocol}//${location.hostname}:8123`;  // direct HA Core
+  ? ''  // relative under ingress
+  : `${location.protocol}//${location.hostname}:8123`;
 
 async function fetchData(){
   const resp = await fetch('dependency_map.json');
@@ -118,7 +114,6 @@ function render(){
     const tr = document.createElement("tr");
     if (!info.enabled) tr.classList.add("disabled");
 
-    // Trace link to HA Core config UI
     const trace = info.config_id
       ? `<a href="${HA_BASE}/config/automation/edit/${info.config_id}" target="_blank">▶</a> `
       : "";
