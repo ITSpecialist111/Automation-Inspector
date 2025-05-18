@@ -22,7 +22,7 @@ See [RELEASE_NOTES.md](RELEASE_NOTES.md) for full changelog.
 
 ## ✨ Key Features
 
-| Feature | MVP v0.3.3 |
+| Feature | MVP |
 |---------|------------|
 | 🗺️ Dependency map | Lists **all automations** with the **entities they reference** (triggers, conditions & actions) |
 | 🔴 Health flags | Unavailable / unknown entities are coloured **red** |
