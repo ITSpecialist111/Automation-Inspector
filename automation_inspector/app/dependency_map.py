@@ -7,6 +7,9 @@ Adds for v0.3.1:
 
 v0.3.4 change:
   • suppress false-positive “entities” (services, non-existent IDs)
+
+v0.3.9 change:
+  • add 'last_triggered' – timestamp of when each automation last ran
 """
 
 from __future__ import annotations
@@ -48,25 +51,31 @@ def collect_entities(obj: Any) -> List[str]:
 
 # ---------------------------------------------------------------- main
 async def build_map() -> Dict[str, dict]:
+    # fetch all entity states
     states_raw = await ha_get("/api/states", json=True) or []
     state_map  = {row["entity_id"]: row for row in states_raw}
     autos      = [s for s in states_raw if s["entity_id"].startswith("automation.")]
     dep: Dict[str, dict] = {}
 
     for st in autos:
-        ent_id   = st["entity_id"]
-        nice     = st["attributes"].get("friendly_name", ent_id)
-        enabled  = (st["state"] == "on")
+        ent_id    = st["entity_id"]
+        nice      = st["attributes"].get("friendly_name", ent_id)
+        enabled   = (st["state"] == "on")
         config_id = st["attributes"].get("id")            # numeric id
-        yaml_txt  = None
 
+        # extract last_triggered timestamp (ISO 8601 string or None)
+        last = None
+        if ent_id in state_map:
+            last = state_map[ent_id]["attributes"].get("last_triggered")
+
+        # load YAML config to collect entity references
+        yaml_txt = None
         if config_id:
             yaml_txt = await ha_get(f"/api/config/automation/config/{config_id}")
-        if yaml_txt is None:                              # fallback by slug
+        if yaml_txt is None:
             slug = ent_id.split(".", 1)[1]
             yaml_txt = await ha_get(f"/api/config/automation/config/{slug}")
 
-        # extract raw IDs from YAML or attributes
         if yaml_txt:
             try:
                 ids = collect_entities(yaml.safe_load(yaml_txt) or {})
@@ -90,9 +99,10 @@ async def build_map() -> Dict[str, dict]:
 
         dep[ent_id] = {
             "friendly_name": nice,
-            "enabled": enabled,
-            "config_id": config_id,
-            "entities": rich,
+            "enabled":       enabled,
+            "config_id":     config_id,
+            "last_triggered": last,
+            "entities":      rich,
         }
 
     print("▶ built map with", len(dep), "automations")

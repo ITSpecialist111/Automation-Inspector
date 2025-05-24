@@ -80,6 +80,8 @@
     }
     tr.disabled td:first-child { opacity: .6; }
     label, button { margin-right: 1rem; }
+    #controls { margin-bottom: 1em; }
+    #controls input { margin-left: .3em; }
   </style>
 </head>
 <body>
@@ -93,9 +95,26 @@
 </label>
 <button id="toggleDark">Toggle Dark Mode</button>
 
+<!-- New controls for filtering by date and search term -->
+<div id="controls">
+  <label>
+    Last run after:
+    <input type="date" id="runFilter">
+  </label>
+  <label>
+    Search:
+    <input type="text" id="searchInput" placeholder="name or entity…">
+  </label>
+  <button id="searchBtn">Filter</button>
+</div>
+
 <table id="tbl">
   <thead>
-    <tr><th>Automation</th><th>Entities</th></tr>
+    <tr>
+      <th>Automation</th>
+      <th>Last Run</th>
+      <th>Entities</th>
+    </tr>
   </thead>
   <tbody></tbody>
 </table>
@@ -117,12 +136,34 @@
   function render(){
     const tbody = document.querySelector("#tbl tbody");
     tbody.innerHTML = "";
-    const errOnly = document.getElementById("errOnly").checked;
-    let errCount=0, entCount=0, badEnts=0;
+    const errOnly    = document.getElementById("errOnly").checked;
+    const runAfter   = document.getElementById("runFilter").value;     // yyyy-mm-dd or empty
+    const searchTerm = document.getElementById("searchInput").value.toLowerCase();
+
+    let errCount = 0, entCount = 0, badEnts = 0;
 
     Object.values(DATA).forEach(info => {
+      // skip if errors-only and this one has no bad entities
       const hasBad = info.entities.some(e => !e.ok);
       if (errOnly && !hasBad) return;
+
+      // skip if last-triggered is before cutoff
+      if (runAfter) {
+        const last = info.last_triggered
+          ? new Date(info.last_triggered)
+          : null;
+        const cutoff = new Date(runAfter + "T00:00:00");
+        if (!last || last < cutoff) return;
+      }
+
+      // skip if search term doesn't match name or any entity id
+      if (searchTerm) {
+        const nameMatch = info.friendly_name.toLowerCase().includes(searchTerm);
+        const entMatch  = info.entities.some(e =>
+          e.id.toLowerCase().includes(searchTerm)
+        );
+        if (!nameMatch && !entMatch) return;
+      }
 
       const tr = document.createElement("tr");
       if (!info.enabled) tr.classList.add("disabled");
@@ -131,8 +172,12 @@
         ? `<a href="${HA_BASE}/config/automation/edit/${info.config_id}" target="_blank">▶</a> `
         : "";
 
+      const lastRunCell = info.last_triggered
+        ? new Date(info.last_triggered).toLocaleString()
+        : "—";
+
       const ents = info.entities.map(e => {
-        const cls = e.ok ? "" : "bad";
+        const cls  = e.ok ? "" : "bad";
         const link = `${HA_BASE}/developer-tools/state?entity_id=${encodeURIComponent(e.id)}`;
         if (!e.ok) badEnts++;
         return `<a href="${link}" target="_blank">
@@ -145,6 +190,7 @@
 
       tr.innerHTML = `
         <td>${trace}<strong>${info.friendly_name}</strong></td>
+        <td>${lastRunCell}</td>
         <td>${ents}</td>
       `;
       tbody.appendChild(tr);
@@ -164,9 +210,18 @@
   }
 
   document.getElementById("errOnly").addEventListener("change", render);
-  document.getElementById("toggleDark").addEventListener("click", ()=>{
+  document.getElementById("runFilter").addEventListener("change", render);
+  document.getElementById("searchBtn").addEventListener("click", render);
+  document.getElementById("searchInput").addEventListener("keyup", e => {
+    if (e.key === "Enter") render();
+  });
+
+  document.getElementById("toggleDark").addEventListener("click", () => {
     document.documentElement.classList.toggle('dark-mode');
-    localStorage.setItem('dark-mode', document.documentElement.classList.contains('dark-mode'));
+    localStorage.setItem(
+      'dark-mode',
+      document.documentElement.classList.contains('dark-mode')
+    );
   });
 
   // Apply stored preference
