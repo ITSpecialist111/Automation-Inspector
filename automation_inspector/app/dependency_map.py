@@ -10,10 +10,14 @@ v0.3.4 change:
 
 v0.3.9 change:
   • add 'last_triggered' – timestamp of when each automation last ran
+  • add orphan detection for input_* helpers
 """
 
 from __future__ import annotations
-import os, re, yaml, httpx
+import os
+import re
+import yaml
+import httpx
 from typing import Any, Dict, List
 
 HA_URL  = "http://supervisor/core"
@@ -36,6 +40,7 @@ async def ha_get(path: str, *, json: bool = False) -> Any | None:
 
 
 def collect_entities(obj: Any) -> List[str]:
+    """Recursively find all entity IDs in a dict/list/str."""
     found: set[str] = set()
     if obj is None:
         return []
@@ -49,8 +54,28 @@ def collect_entities(obj: Any) -> List[str]:
             found.update(collect_entities(val))
     return list(found)
 
+
+async def find_orphaned_helpers(
+    state_map: Dict[str, Any],
+    dep_map: Dict[str, dict]
+) -> List[str]:
+    """
+    Return a sorted list of all input_* helpers that are not referenced
+    by any automation in dep_map.
+    """
+    # 1) gather all helpers in HA
+    all_helpers = {eid for eid in state_map if eid.startswith("input_")}
+    # 2) gather all entities referenced by automations
+    referenced = set()
+    for info in dep_map.values():
+        for ent in info.get("entities", []):
+            referenced.add(ent["id"])
+    # 3) orphans = helpers minus referenced
+    orphans = sorted(all_helpers - referenced)
+    return orphans
+
 # ---------------------------------------------------------------- main
-async def build_map() -> Dict[str, dict]:
+async def build_map() -> Dict[str, Any]:
     # fetch all entity states
     states_raw = await ha_get("/api/states", json=True) or []
     state_map  = {row["entity_id"]: row for row in states_raw}
@@ -61,7 +86,7 @@ async def build_map() -> Dict[str, dict]:
         ent_id    = st["entity_id"]
         nice      = st["attributes"].get("friendly_name", ent_id)
         enabled   = (st["state"] == "on")
-        config_id = st["attributes"].get("id")            # numeric id
+        config_id = st["attributes"].get("id")
 
         # extract last_triggered timestamp (ISO 8601 string or None)
         last = None
@@ -105,5 +130,9 @@ async def build_map() -> Dict[str, dict]:
             "entities":      rich,
         }
 
-    print("▶ built map with", len(dep), "automations")
-    return dep
+    # find orphaned helpers
+    orphans = await find_orphaned_helpers(state_map, dep)
+    print(f"▶ built map with {len(dep)} automations, {len(orphans)} orphaned helpers")
+
+    # return both automations and orphan list
+    return {"automations": dep, "orphans": orphans}
