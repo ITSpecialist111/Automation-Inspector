@@ -81,6 +81,7 @@
     tr.disabled td:first-child { opacity: .6; }
     label, button { margin-right: 1rem; }
     #controls { margin-bottom: 1em; }
+    #controls select,
     #controls input { margin-left: .3em; }
   </style>
 </head>
@@ -95,11 +96,18 @@
 </label>
 <button id="toggleDark">Toggle Dark Mode</button>
 
-<!-- New controls for filtering by date and search term -->
 <div id="controls">
   <label>
-    Last run after:
-    <input type="date" id="runFilter">
+    Last run:
+    <select id="runFilter">
+      <option value="all">All</option>
+      <option value="1">Last 1 day</option>
+      <option value="10">Last 10 days</option>
+      <option value="20">Last 20 days</option>
+      <option value="30">Last 30 days</option>
+      <option value="-30">Older than 30 days</option>
+      <option value="-90">Older than 90 days</option>
+    </select>
   </label>
   <label>
     Search:
@@ -137,26 +145,35 @@
     const tbody = document.querySelector("#tbl tbody");
     tbody.innerHTML = "";
     const errOnly    = document.getElementById("errOnly").checked;
-    const runAfter   = document.getElementById("runFilter").value;     // yyyy-mm-dd or empty
+    const runFilter  = document.getElementById("runFilter").value;  // "all", "1","10","20","30","-30","-90"
     const searchTerm = document.getElementById("searchInput").value.toLowerCase();
 
     let errCount = 0, entCount = 0, badEnts = 0;
 
     Object.values(DATA).forEach(info => {
-      // skip if errors-only and this one has no bad entities
       const hasBad = info.entities.some(e => !e.ok);
       if (errOnly && !hasBad) return;
 
-      // skip if last-triggered is before cutoff
-      if (runAfter) {
-        const last = info.last_triggered
-          ? new Date(info.last_triggered)
+      // Date-range filter
+      if (runFilter !== "all") {
+        const lastTs = info.last_triggered
+          ? new Date(info.last_triggered).getTime()
           : null;
-        const cutoff = new Date(runAfter + "T00:00:00");
-        if (!last || last < cutoff) return;
+        const daysOld = lastTs
+          ? (Date.now() - lastTs) / (1000*60*60*24)
+          : Infinity;
+        const n = Math.abs(Number(runFilter));
+
+        if (runFilter.startsWith("-")) {
+          // older than N days
+          if (daysOld <= n) return;
+        } else {
+          // last N days
+          if (daysOld > n) return;
+        }
       }
 
-      // skip if search term doesn't match name or any entity id
+      // Search filter
       if (searchTerm) {
         const nameMatch = info.friendly_name.toLowerCase().includes(searchTerm);
         const entMatch  = info.entities.some(e =>
@@ -172,14 +189,25 @@
         ? `<a href="${HA_BASE}/config/automation/edit/${info.config_id}" target="_blank">▶</a> `
         : "";
 
-      const lastRunCell = info.last_triggered
-        ? new Date(info.last_triggered).toLocaleString()
-        : "—";
+      // Last-run display & color
+      let lastRunDisplay = "—";
+      let lastStyle = "";
+      if (info.last_triggered) {
+        const lastDate = new Date(info.last_triggered);
+        lastRunDisplay = lastDate.toLocaleString();
+        const daysOld = (Date.now() - lastDate.getTime()) / (1000*60*60*24);
+        const maxDays = 90;
+        const pct = Math.min(daysOld, maxDays) / maxDays;
+        const hue = Math.floor((1 - pct) * 120);
+        lastStyle = `background-color: hsl(${hue},100%,80%);`;
+      }
+      const lastCell = `<td style="${lastStyle}">${lastRunDisplay}</td>`;
 
+      // Entities column
       const ents = info.entities.map(e => {
         const cls  = e.ok ? "" : "bad";
-        const link = `${HA_BASE}/developer-tools/state?entity_id=${encodeURIComponent(e.id)}`;
         if (!e.ok) badEnts++;
+        const link = `${HA_BASE}/developer-tools/state?entity_id=${encodeURIComponent(e.id)}`;
         return `<a href="${link}" target="_blank">
                   <code class="${cls}">${e.id}: ${e.state}</code>
                 </a>`;
@@ -190,7 +218,7 @@
 
       tr.innerHTML = `
         <td>${trace}<strong>${info.friendly_name}</strong></td>
-        <td>${lastRunCell}</td>
+        ${lastCell}
         <td>${ents}</td>
       `;
       tbody.appendChild(tr);
@@ -224,7 +252,6 @@
     );
   });
 
-  // Apply stored preference
   if (localStorage.getItem('dark-mode') === 'true') {
     document.documentElement.classList.add('dark-mode');
   }
