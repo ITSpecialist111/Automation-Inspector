@@ -1,154 +1,180 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8">
-<title>Automation Inspector</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
-:root{
-  --bg:   var(--primary-background-color,#1e1e1e);
-  --fg:   var(--primary-text-color,#e0e0e0);
-  --card: var(--ha-card-background-color,#2b2b2b);
-  --warn: #ff6d6d;
-  --accent:#2196f3;
-}
-body{margin:0;font-family:sans-serif;background:var(--bg);color:var(--fg)}
-header{display:flex;align-items:center;gap:.6rem;padding:.5rem 1rem;background:#333;position:sticky;top:0;z-index:10}
-h1{margin:0;font-size:1rem;color:var(--fg)}
-button{cursor:pointer;border:1px solid #555;border-radius:4px;background:#000;color:var(--fg);padding:.3rem .6rem}
-#search{flex:1;border:1px solid #555;border-radius:4px;padding:.4rem;background:#000;color:var(--fg)}
-.stat{background:var(--accent);border-radius:6px;font-size:.8rem;padding:.2rem .5rem;color:#fff}
-#age-chip{font-size:.8rem;opacity:.8}
-#spinner{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.5);font-size:1.2rem;z-index:9}
-.section{margin:1rem;border:1px solid #444;border-radius:6px;background:var(--card)}
-.section.alert{border-color:var(--warn)}
-.section>summary{padding:.6rem;font-weight:600;outline:none;cursor:pointer}
-.section.alert>summary{color:var(--warn)}
-.section ul{margin:.3rem 0 0 1rem;padding:0}
-.section li{line-height:1.4}
-.val{font-style:italic}
-.off{color:var(--warn)}
-.warn{color:var(--warn)}
-.age{font-size:.8em;opacity:.7}
-label.toggle{display:flex;align-items:center;gap:.3rem;font-size:.8rem;cursor:pointer}
-</style>
+  <meta charset="utf-8">
+  <title>Automation Inspector</title>
+  <style>
+    /* Base (Light Mode) */
+    body {
+      font-family: var(--font-family, sans-serif);
+      margin: 1rem;
+      background-color: white;
+      color: black;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      background: #fff;
+    }
+    th, td {
+      padding: .35rem .6rem;
+      border-bottom: 1px solid #ccc;
+      vertical-align: top;
+      color: black;
+    }
+    tr:nth-child(even) {
+      background: #f7f7f7;
+    }
+    code {
+      background: #eee;
+      border: 1px solid #ccc;
+      padding: 2px 4px;
+      border-radius: 4px;
+      margin: 2px 3px 2px 0;
+      display: inline-block;
+      color: black;
+    }
+    code.bad {
+      background: #fdd;
+      color: #900;
+      border-color: #d66;
+    }
+    a {
+      color: black;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+
+    /* Dark Mode Overrides */
+    .dark-mode body,
+    .dark-mode th,
+    .dark-mode td,
+    .dark-mode code,
+    .dark-mode a {
+      background-color: #222 !important;
+      color: #fff !important;
+      border-color: #555 !important;
+    }
+    .dark-mode table {
+      background: #333 !important;
+    }
+    .dark-mode tr:nth-child(even) {
+      background: #2a2a2a !important;
+    }
+    .dark-mode code {
+      background: #444 !important;
+    }
+    .dark-mode code.bad {
+      background: #600 !important;
+      color: #fdd !important;
+      border-color: #a33 !important;
+    }
+
+    /* Other styling */
+    h1 { margin: .2rem 0 1rem 0 }
+    #banner { margin: .6rem 0; font-weight: 600 }
+    thead th {
+      position: sticky; top: 0; background: inherit; z-index: 1;
+    }
+    tr.disabled td:first-child { opacity: .6; }
+    label, button { margin-right: 1rem; }
+  </style>
 </head>
 <body>
 
-<header>
-  <h1>Automation Inspector</h1>
-  <span id="summary" class="stat"></span>
-  <span id="age-chip"></span>
+<h1>Automation Inspector – Add-on</h1>
 
-  <input id="search" placeholder="Search automations…">
-  <label class="toggle">
-    <input type="checkbox" id="issues-only">
-    Issues only
-  </label>
+<div id="banner">Loading…</div>
 
-  <button id="refresh" title="Refresh">⟳</button>
-  <button id="toggle"  title="Toggle dark/light">🌙</button>
-</header>
+<label>
+  <input type="checkbox" id="errOnly"> show errors only
+</label>
+<button id="toggleDark">Toggle Dark Mode</button>
 
-<div id="spinner">Loading…</div>
-<main id="list"></main>
+<table id="tbl">
+  <thead>
+    <tr><th>Automation</th><th>Entities</th></tr>
+  </thead>
+  <tbody></tbody>
+</table>
 
 <script>
-const CACHE="inspector_map_v4";
-let darkForced=null;
-let issuesOnly=false;
+  let DATA = {};
 
-/* ─── theme ─── */
-function setTheme(force){
-  if(force!==null) darkForced=force;
-  const d=darkForced??matchMedia('(prefers-color-scheme: dark)').matches;
-  document.documentElement.style.setProperty('--bg', d?'#1e1e1e':'#fafafa');
-  document.documentElement.style.setProperty('--fg', d?'#e0e0e0':'#111');
-  document.getElementById('toggle').textContent=d?'☀️':'🌙';
-}
-setTheme(null);
-document.getElementById('toggle').onclick=()=>setTheme(!(darkForced??false));
+  // Detect Ingress vs direct
+  const isIngress = window.location.pathname.includes('/api/hassio_ingress');
+  const HA_BASE = isIngress
+    ? ''
+    : `${location.protocol}//${location.hostname}:8123`;
 
-/* ─── helpers ─── */
-async function j(u){const r=await fetch(u);if(!r.ok)throw await r.text();return r.json();}
-function clearCache(){sessionStorage.removeItem(CACHE);}
-function fmtAge(sec){if(sec<60)return sec+' s';const m=Math.round(sec/60);return m+' m';}
+  async function fetchData(){
+    const resp = await fetch('dependency_map.json');
+    DATA = await resp.json();
+  }
 
-/* ─── global refs ─── */
-const spinner=document.getElementById('spinner');
-const list   =document.getElementById('list');
-const search =document.getElementById('search');
-const issuesChk=document.getElementById('issues-only');
+  function render(){
+    const tbody = document.querySelector("#tbl tbody");
+    tbody.innerHTML = "";
+    const errOnly = document.getElementById("errOnly").checked;
+    let errCount=0, entCount=0, badEnts=0;
 
-/* ─── build page ─── */
-async function build(force){
-  if(force) clearCache();
-  spinner.style.display='flex';
+    Object.values(DATA).forEach(info => {
+      const hasBad = info.entities.some(e => !e.ok);
+      if (errOnly && !hasBad) return;
 
-  let map;
-  const c=sessionStorage.getItem(CACHE);
-  if(c&&!force){map=JSON.parse(c);}else{map=await j('/dependency_map.json');sessionStorage.setItem(CACHE,JSON.stringify(map));}
+      const tr = document.createElement("tr");
+      if (!info.enabled) tr.classList.add("disabled");
 
-  const {_summary:{generated_at,...s}}=map;
-  const ageSec=Math.round((Date.now()-Date.parse(generated_at))/1000);
-  document.getElementById('age-chip').textContent=`updated ${fmtAge(ageSec)} ago`;
-  document.getElementById('summary').textContent=`${s.total} auto · ${s.unknown+s.offline+s.stale} alerts`;
+      const trace = info.config_id
+        ? `<a href="${HA_BASE}/config/automation/edit/${info.config_id}" target="_blank">▶</a> `
+        : "";
 
-  list.innerHTML='';
-  Object.entries(map).filter(([k])=>!k.startsWith('_')).forEach(([id,info])=>{
-    const hasAlert=info.unknown_triggers.length||info.offline_members.length||
-                   (info.stale_days!==null&&info.stale_days>=info.stale_threshold);
+      const ents = info.entities.map(e => {
+        const cls = e.ok ? "" : "bad";
+        const link = `${HA_BASE}/developer-tools/state?entity_id=${encodeURIComponent(e.id)}`;
+        if (!e.ok) badEnts++;
+        return `<a href="${link}" target="_blank">
+                  <code class="${cls}">${e.id}: ${e.state}</code>
+                </a>`;
+      }).join(" ");
 
-    const sec=document.createElement('details');
-    sec.className='section'+(hasAlert?' alert':'');
-    sec.dataset.friendly=info.friendly_name.toLowerCase();
-    sec.dataset.alert=hasAlert?'1':'0';
-    sec.open=false;
+      entCount += info.entities.length;
+      if (hasBad) errCount++;
 
-    sec.innerHTML=`<summary><a href="${info.ui_link}" target="_blank">${info.friendly_name}</a></summary>`;
-    const ul=document.createElement('ul');
-
-    info.entities.forEach(e=>{
-      const off=e.state==='unavailable';
-      const stale=e.age>120;
-      ul.insertAdjacentHTML('beforeend',
-        `<li class="${off?'off':''}">${e.id} = <span class="val">${e.state}${e.unit?' '+e.unit:''}</span> <span class="age ${stale?'off':''}">• ${fmtAge(e.age)} ago</span></li>`);
+      tr.innerHTML = `
+        <td>${trace}<strong>${info.friendly_name}</strong></td>
+        <td>${ents}</td>
+      `;
+      tbody.appendChild(tr);
     });
 
-    if(info.unknown_triggers.length){
-      ul.insertAdjacentHTML('beforeend','<li class="warn">⚠ unknown triggers</li>');
-      info.unknown_triggers.forEach(t=>ul.insertAdjacentHTML('beforeend',`<li class="warn">${t}</li>`));
-    }
-    if(info.offline_members.length){
-      ul.insertAdjacentHTML('beforeend','<li class="warn">⚠ offline members</li>');
-      info.offline_members.forEach(m=>ul.insertAdjacentHTML('beforeend',`<li class="warn">${m}</li>`));
-    }
-    if(info.stale_days!==null&&info.stale_days>=info.stale_threshold){
-      ul.insertAdjacentHTML('beforeend',`<li class="warn">⏰ not run for ${info.stale_days} d</li>`);
-    }
-    sec.appendChild(ul);
-    list.appendChild(sec);
+    const autoTotal = Object.keys(DATA).length;
+    document.getElementById("banner").textContent =
+      `${autoTotal} automations · ${entCount} entities — `
+      + (errCount
+          ? `${errCount} automations with issues, ${badEnts} bad entities`
+          : `all OK`);
+  }
+
+  async function load(){
+    await fetchData();
+    render();
+  }
+
+  document.getElementById("errOnly").addEventListener("change", render);
+  document.getElementById("toggleDark").addEventListener("click", ()=>{
+    document.documentElement.classList.toggle('dark-mode');
+    localStorage.setItem('dark-mode', document.documentElement.classList.contains('dark-mode'));
   });
 
-  applyFilters();
-  spinner.style.display='none';
-}
-build(false);
+  // Apply stored preference
+  if (localStorage.getItem('dark-mode') === 'true') {
+    document.documentElement.classList.add('dark-mode');
+  }
 
-/* ─── filtering ─── */
-function applyFilters(){
-  const q=search.value.toLowerCase();
-  document.querySelectorAll('.section').forEach(sec=>{
-    const matchText=sec.dataset.friendly.includes(q);
-    const matchAlert=!issuesOnly||sec.dataset.alert==='1';
-    sec.style.display=(matchText&&matchAlert)?'':'none';
-  });
-}
-search.addEventListener('input',applyFilters);
-issuesChk.addEventListener('change',e=>{issuesOnly=e.target.checked;applyFilters();});
-
-/* ─── refresh ─── */
-document.getElementById('refresh').onclick=()=>build(true);
+  load();
 </script>
 </body>
 </html>
