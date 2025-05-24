@@ -1,18 +1,14 @@
 """
 dependency_map.py – builds the JSON served at /dependency_map.json
-
-• pulls all states once
-• filters automation.* from that list (no /states/automation 404)
-• unknown / broken trigger detection
-• stale flag, offline group-members
+Adds:
+ • entity state lookup
+ • top-level summary counts
+ • numeric-id check to avoid 404 on YAML automations
 """
 
 from __future__ import annotations
 
-import asyncio
-import logging
-import os
-import re
+import logging, os, re
 from datetime import datetime, timezone
 from typing import Any, List
 
@@ -20,6 +16,7 @@ import httpx
 
 _LOGGER = logging.getLogger(__name__)
 
+# ───────────────────────── constants ─────────────────────────
 ENTITY_RE = re.compile(
     r"\b("
     r"alarm_control_panel|automation|binary_sensor|button|calendar|camera|climate|"
@@ -31,21 +28,19 @@ ENTITY_RE = re.compile(
     re.I,
 )
 
-SUPERVISOR_URL   = "http://supervisor/core/api"
-SUPERVISOR_TOKEN = os.getenv("SUPERVISOR_TOKEN")
-STALE_DAYS       = int(os.getenv("INSPECTOR_STALE_DAYS", "30"))
+SUPERVISOR = "http://supervisor/core/api"
+TOKEN      = os.environ["SUPERVISOR_TOKEN"]
+STALE_DAYS = int(os.getenv("INSPECTOR_STALE_DAYS", "30"))
 
 http: httpx.AsyncClient | None = None
 
 
-# ─────────────────────────── helpers ────────────────────────────
+# ───────────────────────── helpers ───────────────────────────
 async def ha_get(path: str) -> Any:
     global http
     if http is None:
         http = httpx.AsyncClient(
-            base_url=SUPERVISOR_URL,
-            headers={"Authorization": f"Bearer {SUPERVISOR_TOKEN}"},
-            timeout=20,
+            base_url=SUPERVISOR, headers={"Authorization": f"Bearer {TOKEN}"}, timeout=20
         )
     r = await http.get(path)
     r.raise_for_status()
@@ -65,38 +60,40 @@ def collect_entities(obj: Any) -> List[str]:
     return list(found)
 
 
-# ─────────────────────────── builder ────────────────────────────
+# ───────────────────────── builder ───────────────────────────
 async def build_map() -> dict[str, Any]:
-    # one request → all states
     states = await ha_get("/states")
-
-    automations = [s for s in states if s["entity_id"].startswith("automation.")]
-    all_entities = {s["entity_id"] for s in states}
-
-    now_utc   = datetime.now(timezone.utc)
     state_map = {s["entity_id"]: s for s in states}
 
-    # offline members lookup for every group.*
+    automations = [s for s in states if s["entity_id"].startswith("automation.")]
+    all_entities = set(state_map)
+
+    now_utc = datetime.now(timezone.utc)
+
     offline_by_group: dict[str, List[str]] = {}
     for st in states:
         if st["entity_id"].startswith("group."):
             members = st["attributes"].get("entity_id", [])
             offline = [
-                m for m in members
+                m
+                for m in members
                 if state_map.get(m, {}).get("state") in ("unavailable", "unknown")
             ]
             if offline:
                 offline_by_group[st["entity_id"]] = offline
 
     dep_map: dict[str, Any] = {}
+    # counters for summary
+    total_unknown = total_offline = total_stale = 0
 
     for auto in automations:
         auto_id = auto["entity_id"]
-        num_id  = auto["attributes"].get("id")  # UI automations have numeric id
+        num_id  = auto["attributes"].get("id")
+        is_numeric_id = isinstance(num_id, (int, str)) and str(num_id).isdigit()
 
-        # full config fetch (handle YAML automations gracefully)
+        # ─ fetch config ─
         try:
-            if num_id:
+            if is_numeric_id:
                 config = await ha_get(f"/config/automation/config/{num_id}")
             else:
                 config = {
@@ -114,38 +111,52 @@ async def build_map() -> dict[str, Any]:
 
         entities = collect_entities(config)
 
-        # unknown / broken triggers
+        # unknown triggers
         unknown: list[str] = []
         for trig in config.get("trigger", []):
             if isinstance(trig, dict):
                 ids = trig.get("entity_id") or []
-                if isinstance(ids, str):
-                    ids = [ids]
-                for eid in ids:
-                    if eid not in all_entities:
-                        unknown.append(eid)
+                ids = [ids] if isinstance(ids, str) else ids
+                unknown.extend(eid for eid in ids if eid not in all_entities)
+        total_unknown += bool(unknown)
 
-        # stale calculation
+        # stale calc
         last = auto["attributes"].get("last_triggered")
-        stale_days = None
+        stale = None
         if last:
-            delta      = now_utc - datetime.fromisoformat(last)
-            stale_days = delta.days
+            stale = (now_utc - datetime.fromisoformat(last)).days
+        total_stale += stale is not None and stale >= STALE_DAYS
 
-        # offline members referenced by automation groups
+        # offline members
         offline_members: list[str] = []
         for e in entities:
             if e.startswith("group.") and e in offline_by_group:
                 offline_members.extend(offline_by_group[e])
+        total_offline += bool(offline_members)
+
+        # bundle entity display data (id + state)
+        entity_rows = [
+            {
+                "id": eid,
+                "state": state_map.get(eid, {}).get("state", "—"),
+            }
+            for eid in entities
+        ]
 
         dep_map[auto_id] = {
             "friendly_name": auto["attributes"].get("friendly_name", auto_id),
-            "entities":         sorted(entities),
+            "entities": entity_rows,
             "unknown_triggers": sorted(set(unknown)),
             "offline_members":  sorted(set(offline_members)),
             "last_triggered":   last,
-            "stale_days":       stale_days,
+            "stale_days":       stale,
             "stale_threshold":  STALE_DAYS,
         }
 
+    dep_map["_summary"] = {
+        "total": len(automations),
+        "unknown": total_unknown,
+        "offline": total_offline,
+        "stale": total_stale,
+    }
     return dep_map

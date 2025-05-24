@@ -9,96 +9,120 @@
   --bg:   var(--primary-background-color, #111);
   --fg:   var(--primary-text-color,        #eee);
   --warn: #f77;
+  --accent:#2196f3;
 }
-body{font-family:sans-serif;margin:0;background:var(--bg);color:var(--fg)}
-header{display:flex;gap:1rem;align-items:center;padding:.5rem 1rem;background:#222;position:sticky;top:0}
-#search{flex:1;padding:.4rem .6rem;border-radius:4px;border:1px solid #555;background:#000;color:var(--fg)}
-#alert-count{font-size:.9rem;color:var(--warn)}
+body{margin:0;font-family:sans-serif;background:var(--bg);color:var(--fg)}
+header{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;background:#222;position:sticky;top:0;}
+h1{margin:0;font-size:1.1rem;}
+button{cursor:pointer;padding:.3rem .6rem;border:1px solid #555;border-radius:4px;background:#000;color:var(--fg)}
+#search{flex:1;padding:.4rem;border-radius:4px;border:1px solid #555;background:#000;color:var(--fg)}
+.stat{background:var(--accent);padding:.2rem .5rem;border-radius:6px;font-size:.8rem;}
+#spinner{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.5);font-size:1.2rem;}
 .card{margin:1rem;border:1px solid #444;border-radius:6px;padding:.6rem;background:#1a1a1a}
 .card ul{margin:.3rem 0 0 1rem;padding:0}
 .card li{line-height:1.4}
 .warn{color:var(--warn)}
+.entity-off{color:#f06}
 h2{margin:.2rem 0 .4rem;font-size:1.1rem}
 </style>
 </head>
 <body>
 
 <header>
+  <h1>Automation Inspector</h1>
+  <span id="summary" class="stat"></span>
   <input id="search" placeholder="Search automations…">
-  <span id="alert-count"></span>
+  <button id="toggle">🌙</button>
 </header>
 
+<div id="spinner">Loading…</div>
 <main id="cards"></main>
 
 <script>
-const MAP_KEY = "inspector_map_v2";
+const MAP_KEY = "inspector_map_v3";
+let darkForced = null;
 
+function setTheme(force){
+  if(force!==null){ darkForced=force; }
+  const dark = darkForced ?? matchMedia('(prefers-color-scheme: dark)').matches;
+  document.documentElement.style.setProperty('--bg',   dark?'#111':'#fff');
+  document.documentElement.style.setProperty('--fg',   dark?'#eee':'#000');
+  document.getElementById('toggle').textContent = dark?'☀️':'🌙';
+}
+setTheme(null);
+document.getElementById('toggle').onclick = ()=> setTheme(!(darkForced ?? false));
+
+// ---- fetch helpers -------------------------------------------------
 async function fetchJSON(u){
-  const r = await fetch(u);
-  if(!r.ok){throw new Error(await r.text());}
-  return r.json();
+  const r=await fetch(u); if(!r.ok) throw await r.text(); return r.json();
 }
-
-// sessionStorage cache
 async function getMap(){
-  const cached = sessionStorage.getItem(MAP_KEY);
-  if(cached){ return JSON.parse(cached); }
-  const data = await fetchJSON("/dependency_map.json");   // absolute path → works via Ingress & direct
-  sessionStorage.setItem(MAP_KEY, JSON.stringify(data));
-  return data;
+  const c=sessionStorage.getItem(MAP_KEY);
+  if(c) return JSON.parse(c);
+  const d=await fetchJSON("/dependency_map.json");
+  sessionStorage.setItem(MAP_KEY, JSON.stringify(d));
+  return d;
 }
 
-function makeCard(id, info){
-  const div = document.createElement("div");
-  div.className = "card";
-  div.dataset.friendly = info.friendly_name.toLowerCase();
+// ---- card builder --------------------------------------------------
+function makeCard(id,info){
+  const div=document.createElement('div');
+  div.className='card'; div.dataset.friendly=info.friendly_name.toLowerCase();
 
-  let html = `<h2>${info.friendly_name}</h2><ul><li><strong>${id}</strong></li>`;
-  info.entities.forEach(e => html += `<li>${e}</li>`);
+  let html=`<h2>${info.friendly_name}</h2><ul><li><strong>${id}</strong></li>`;
+  info.entities.forEach(e=>{
+     const cls = e.state==='unavailable'?'entity-off':'';
+     html+=`<li class="${cls}">${e.id} – <em>${e.state}</em></li>`;
+  });
 
   if(info.unknown_triggers.length){
-    html += '<li class="warn">⚠ Unknown triggers</li>';
-    info.unknown_triggers.forEach(t => html += `<li class="warn">${t}</li>`);
+    html+='<li class="warn">⚠ Unknown triggers</li>';
+    info.unknown_triggers.forEach(t=>html+=`<li class="warn">${t}</li>`);
   }
   if(info.offline_members.length){
-    html += '<li class="warn">⚠ Offline group members</li>';
-    info.offline_members.forEach(m => html += `<li class="warn">${m}</li>`);
+    html+='<li class="warn">⚠ Offline group members</li>';
+    info.offline_members.forEach(m=>html+=`<li class="warn">${m}</li>`);
   }
-  if(info.stale_days !== null && info.stale_days >= info.stale_threshold){
-    html += `<li class="warn">⏰ Not run for ${info.stale_days} d</li>`;
+  if(info.stale_days!==null && info.stale_days>=info.stale_threshold){
+    html+=`<li class="warn">⏰ Not run for ${info.stale_days} d</li>`;
   }
-
-  html += "</ul>";
-  div.innerHTML = html;
+  div.innerHTML=html+'</ul>';
   return div;
 }
 
-async function build(){
-  let map;
-  try{ map = await getMap(); }
-  catch(e){
-    console.error(e);
-    sessionStorage.removeItem(MAP_KEY);
-    alert("Automation Inspector couldn’t load data.\nCheck the add-on logs.");
-    return;
-  }
-  const container = document.getElementById("cards");
-  container.innerHTML = "";
-  Object.entries(map).forEach(([id,info]) => container.appendChild(makeCard(id,info)));
+// ---- build page ----------------------------------------------------
+getMap().then(async map=>{
+  document.getElementById('spinner').style.display='none';
+
+  // summary chip
+  const s=map._summary; delete map._summary;
+  document.getElementById('summary').textContent =
+    `${Object.keys(map).length} auto · ${s.unknown+s.offline+s.stale} alerts`;
+
+  // cards
+  const cont=document.getElementById('cards');
+  Object.entries(map).forEach(([id,info])=>cont.appendChild(makeCard(id,info)));
 
   // alerts badge
   try{
-    const alerts = await fetchJSON("/alerts");
-    if(alerts.length){ document.getElementById("alert-count").textContent = `${alerts.length} alerts`; }
-  }catch(e){ console.warn("Alerts fetch failed", e); }
-}
-build();
+    const alerts=await fetchJSON("/alerts");
+    if(alerts.length){
+      const badge=document.createElement('span');
+      badge.className='warn';
+      badge.textContent=` ${alerts.length} alerts`;
+      document.querySelector('header').appendChild(badge);
+    }
+  }catch{}
+}).catch(e=>{
+  document.getElementById('spinner').textContent='Error loading data';
+  console.error(e);
+});
 
-// search
-document.getElementById("search").addEventListener("input", e=>{
-  const q = e.target.value.toLowerCase();
-  document.querySelectorAll(".card").forEach(c=>{
-    c.style.display = c.dataset.friendly.includes(q) ? "" : "none";
+// search filter
+document.getElementById('search').addEventListener('input',e=>{
+  const q=e.target.value.toLowerCase();
+  document.querySelectorAll('.card').forEach(c=>{
+    c.style.display=c.dataset.friendly.includes(q)?'':'none';
   });
 });
 </script>
