@@ -1,20 +1,20 @@
 """
-dependency_map.py – builds /dependency_map.json
+dependency_map.py – builds the JSON served at /dependency_map.json
 
-• FIX: regex now returns full entity_id (sensor.kitchen not just “sensor”)
-• adds unit_of_measurement & friendly_name for UI
-• summary counters per alert category
+Adds:
+• generated_at ISO timestamp
+• entity last_changed secondsAgo (for “stale” highlighting)
+• link to editor (numeric id) or developer-tools fallback
 """
 
 from __future__ import annotations
-import logging, os, re
+import logging, os, re, time
 from datetime import datetime, timezone
 from typing import Any, List
 
 import httpx
 _LOGGER = logging.getLogger(__name__)
 
-# full entity_id capture
 _DOMAINS = (
     "alarm_control_panel|automation|binary_sensor|button|calendar|camera|climate|"
     "cover|device_tracker|fan|group|humidifier|input_boolean|input_button|"
@@ -27,9 +27,9 @@ ENTITY_RE = re.compile(rf"\b((?:{_DOMAINS})\.[\w\-]+)\b", re.I)
 SUPERVISOR = "http://supervisor/core/api"
 TOKEN      = os.environ["SUPERVISOR_TOKEN"]
 STALE_DAYS = int(os.getenv("INSPECTOR_STALE_DAYS", "30"))
-http: httpx.AsyncClient | None = None
 
-async def ha_get(path: str) -> Any:
+http: httpx.AsyncClient | None = None
+async def ha_get(path:str)->Any:
     global http
     if http is None:
         http = httpx.AsyncClient(
@@ -37,104 +37,95 @@ async def ha_get(path: str) -> Any:
             headers={"Authorization": f"Bearer {TOKEN}"},
             timeout=20,
         )
-    r = await http.get(path)
-    r.raise_for_status()
-    return r.json()
+    r=await http.get(path); r.raise_for_status(); return r.json()
 
-def collect_entities(obj: Any) -> List[str]:
-    found: set[str] = set()
-    if isinstance(obj, str):
+def collect_entities(obj:Any)->List[str]:
+    found:set[str]=set()
+    if isinstance(obj,str):
         found.update(ENTITY_RE.findall(obj))
-    elif isinstance(obj, list):
+    elif isinstance(obj,list):
         for itm in obj: found.update(collect_entities(itm))
-    elif isinstance(obj, dict):
+    elif isinstance(obj,dict):
         for v in obj.values(): found.update(collect_entities(v))
     return list(found)
 
-# ─────────────────────────────────────────────────────────────────────
-async def build_map() -> dict[str, Any]:
+# ───────────────────────── builder ─────────────────────────
+async def build_map()->dict[str,Any]:
+    gen_ts = datetime.now(timezone.utc)
     states = await ha_get("/states")
     state_map = {s["entity_id"]: s for s in states}
-    automations = [s for s in states if s["entity_id"].startswith("automation.")]
-    all_entities = set(state_map)
 
-    now_utc = datetime.now(timezone.utc)
+    autos = [s for s in states if s["entity_id"].startswith("automation.")]
+    all_entities=set(state_map)
 
-    # offline members lookup
-    offline_by_group: dict[str, List[str]] = {}
-    for st in states:
-        if st["entity_id"].startswith("group."):
-            members = st["attributes"].get("entity_id", [])
-            offline = [
-                m for m in members
-                if state_map.get(m, {}).get("state") in ("unavailable", "unknown")
-            ]
-            if offline: offline_by_group[st["entity_id"]] = offline
+    # group offline cache
+    offline_by_group={}
+    for s in states:
+        if s["entity_id"].startswith("group."):
+            mem=s["attributes"].get("entity_id",[])
+            off=[m for m in mem if state_map.get(m,{}).get("state") in ("unavailable","unknown")]
+            if off: offline_by_group[s["entity_id"]]=off
 
-    summary = dict(total=len(automations), unknown=0, offline=0, stale=0)
-    dep_map: dict[str, Any] = {}
+    summary=dict(total=len(autos),unknown=0,offline=0,stale=0)
+    dep={}
 
-    for auto in automations:
-        auto_id = auto["entity_id"]
-        num_id  = auto["attributes"].get("id")
-        config  = {}
+    for a in autos:
+        aid=a["entity_id"]; num=a["attributes"].get("id")
+        # fetch config if numeric id
+        conf={}
         try:
-            if str(num_id).isdigit():
-                config = await ha_get(f"/config/automation/config/{num_id}")
-        except Exception as e:
-            _LOGGER.debug("Using attribute fallback for %s (%s)", auto_id, e)
-        finally:
-            if not config:
-                config = {
-                    "trigger":   auto["attributes"].get("trigger", []),
-                    "condition": auto["attributes"].get("condition", []),
-                    "action":    auto["attributes"].get("action", []),
-                }
+            if str(num).isdigit():
+                conf=await ha_get(f"/config/automation/config/{num}")
+        except Exception as e: _LOGGER.debug("cfg fallback %s: %s",aid,e)
+        if not conf:
+            conf=dict(trigger=a["attributes"].get("trigger",[]),
+                      condition=a["attributes"].get("condition",[]),
+                      action=a["attributes"].get("action",[]))
+        ents=collect_entities(conf)
 
-        entities = collect_entities(config)
+        # unknown
+        unknown=[eid for trig in conf.get("trigger",[])
+                 if isinstance(trig,dict)
+                 for eid in (trig.get("entity_id") or ([]))
+                    if isinstance(eid,str) and eid not in all_entities]
+        summary["unknown"]+=bool(unknown)
 
-        # ---- unknown triggers
-        unknown = []
-        for trig in config.get("trigger", []):
-            if isinstance(trig, dict):
-                ids = trig.get("entity_id") or []
-                if isinstance(ids, str): ids=[ids]
-                unknown += [eid for eid in ids if eid not in all_entities]
-        summary["unknown"] += bool(unknown)
+        # stale
+        last=a["attributes"].get("last_triggered")
+        stale=None
+        if last: stale=(gen_ts-datetime.fromisoformat(last)).days
+        summary["stale"]+= stale is not None and stale>=STALE_DAYS
 
-        # ---- stale
-        last = auto["attributes"].get("last_triggered")
-        stale_days = None
-        if last:
-            stale_days = (now_utc - datetime.fromisoformat(last)).days
-        summary["stale"] += stale_days is not None and stale_days >= STALE_DAYS
+        # offline members
+        off=[]
+        for g in [e for e in ents if e.startswith("group.")]:
+            off+=offline_by_group.get(g,[])
+        summary["offline"]+=bool(off)
 
-        # ---- offline members
-        offline_members=[]
-        for g in (e for e in entities if e.startswith("group.")):
-            offline_members+=offline_by_group.get(g,[])
-        summary["offline"] += bool(offline_members)
-
-        # ---- entity display rows
         rows=[]
-        for eid in entities:
-            st = state_map.get(eid, {})
-            rows.append({
-                "id": eid,
-                "state": st.get("state", "—"),
-                "unit": st.get("attributes", {}).get("unit_of_measurement",""),
-                "friendly": st.get("attributes", {}).get("friendly_name",""),
-            })
+        for eid in ents:
+            st=state_map.get(eid,{})
+            changed=datetime.fromisoformat(st.get("last_changed",gen_ts.isoformat()))
+            age=int((gen_ts-changed).total_seconds())
+            rows.append(dict(
+                id=eid,
+                state=st.get("state","—"),
+                unit=st.get("attributes",{}).get("unit_of_measurement",""),
+                friendly=st.get("attributes",{}).get("friendly_name",""),
+                age=age,
+            ))
 
-        dep_map[auto_id]={
-            "friendly_name": auto["attributes"].get("friendly_name", auto_id),
-            "entities": rows,
-            "unknown_triggers": sorted(set(unknown)),
-            "offline_members": sorted(set(offline_members)),
-            "last_triggered": last,
-            "stale_days": stale_days,
-            "stale_threshold": STALE_DAYS,
-        }
+        dep[aid]=dict(
+            friendly_name=a["attributes"].get("friendly_name",aid),
+            ui_link=f"/config/automation/edit/{num}" if str(num).isdigit()
+                    else f"/developer-tools/state?history_back=1&entity_id={aid}",
+            entities=rows,
+            unknown_triggers=unknown,
+            offline_members=off,
+            last_triggered=last,
+            stale_days=stale,
+            stale_threshold=STALE_DAYS,
+        )
 
-    dep_map["_summary"]=summary
-    return dep_map
+    dep["_summary"]=summary|dict(generated_at=gen_ts.isoformat())
+    return dep

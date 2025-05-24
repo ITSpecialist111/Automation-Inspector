@@ -4,184 +4,122 @@
 <meta charset="UTF-8">
 <title>Automation Inspector</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-
-<!-- ───────────── CSS ───────────── -->
 <style>
 :root{
-  --bg:    var(--primary-background-color, #111);
-  --fg:    var(--primary-text-color,        #eee);
-  --warn:  #f77;
+  --bg:   var(--primary-background-color,#1e1e1e);
+  --fg:   var(--primary-text-color,#e0e0e0);
+  --card: var(--ha-card-background-color,#2b2b2b);
+  --warn: #ff6d6d;
   --accent:#2196f3;
 }
-
-/* base */
 body{margin:0;font-family:sans-serif;background:var(--bg);color:var(--fg)}
-
-/* header bar */
-header{
-  display:flex;
-  align-items:center;
-  gap:.8rem;
-  padding:.6rem 1rem;
-  background:#222;
-  position:sticky;top:0;z-index:10;
-}
-h1{margin:0;font-size:1.1rem;color:var(--fg)}
-button{
-  cursor:pointer;
-  padding:.3rem .6rem;
-  border:1px solid #555;
-  border-radius:4px;
-  background:#000;
-  color:var(--fg)
-}
-#search{
-  flex:1;
-  padding:.4rem;
-  border-radius:4px;
-  border:1px solid #555;
-  background:#000;
-  color:var(--fg)
-}
-.stat{
-  background:var(--accent);
-  padding:.2rem .5rem;
-  border-radius:6px;
-  font-size:.8rem;
-  color:#fff;
-}
-
-/* loading overlay */
-#spinner{
-  position:fixed;inset:0;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  background:rgba(0,0,0,.55);
-  font-size:1.2rem;
-  z-index:9;
-}
-
-/* cards */
-.card{
-  margin:1rem;
-  border:1px solid #444;
-  border-radius:6px;
-  padding:.6rem;
-  background:var(--ha-card-background-color, #262626);
-}
-.card ul{margin:.3rem 0 0 1rem;padding:0}
-.card li{line-height:1.4}
-.entity-off{color:#f06}
+header{display:flex;align-items:center;gap:.7rem;padding:.5rem 1rem;background:#333;position:sticky;top:0;z-index:10}
+h1{margin:0;font-size:1rem;color:var(--fg)}
+button{cursor:pointer;border:1px solid #555;border-radius:4px;background:#000;color:var(--fg);padding:.3rem .6rem}
+#search{flex:1;border:1px solid #555;border-radius:4px;padding:.4rem;background:#000;color:var(--fg)}
+.stat{background:var(--accent);border-radius:6px;font-size:.8rem;padding:.2rem .5rem;color:#fff}
+#spinner{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.5);font-size:1.2rem;z-index:9}
+.section{margin:1rem;border:1px solid #444;border-radius:6px;background:var(--card)}
+.section>summary{padding:.6rem;font-weight:600;outline:none;cursor:pointer}
+.section ul{margin:.3rem 0 0 1rem;padding:0}
+.section li{line-height:1.4}
+.val{font-style:italic}
+.off{color:var(--warn)}
 .warn{color:var(--warn)}
-h2{margin:.2rem 0 .4rem;font-size:1.1rem}
+.age{font-size:.8em;opacity:.7}
+#age-chip{font-size:.8rem;opacity:.8}
 </style>
 </head>
-
 <body>
+
 <header>
   <h1>Automation Inspector</h1>
   <span id="summary" class="stat"></span>
+  <span id="age-chip"></span>
   <input id="search" placeholder="Search automations…">
+  <button id="refresh" title="Refresh">⟳</button>
   <button id="toggle" title="Toggle dark/light">🌙</button>
 </header>
 
 <div id="spinner">Loading…</div>
-<main id="cards"></main>
+<main id="list"></main>
 
-<!-- ───────────── JS ───────────── -->
 <script>
-const MAP_KEY = "inspector_map_v3";
-let darkForced = null;
+const CACHE="inspector_map_v4";  // bump key to avoid stale structure
+let darkForced=null;
 
-/* theme handling -------------------------------------------------- */
+/* ───── theme ───── */
 function setTheme(force){
-  if(force!==null) darkForced = force;
-  const dark = darkForced ?? matchMedia('(prefers-color-scheme: dark)').matches;
-  document.documentElement.style.setProperty('--bg',  dark ? '#111' : '#fff');
-  document.documentElement.style.setProperty('--fg',  dark ? '#eee' : '#000');
-  document.getElementById('toggle').textContent = dark ? '☀️' : '🌙';
+  if(force!==null) darkForced=force;
+  const d=darkForced??matchMedia('(prefers-color-scheme: dark)').matches;
+  document.documentElement.style.setProperty('--bg',d?'#1e1e1e':'#fafafa');
+  document.documentElement.style.setProperty('--fg',d?'#e0e0e0':'#111');
+  document.getElementById('toggle').textContent=d?'☀️':'🌙';
 }
 setTheme(null);
-document.getElementById('toggle').onclick = () => setTheme(!(darkForced ?? false));
+document.getElementById('toggle').onclick=()=>setTheme(!(darkForced??false));
 
-/* helpers ---------------------------------------------------------- */
-async function fetchJSON(u){
-  const r = await fetch(u);
-  if(!r.ok) throw await r.text();
-  return r.json();
-}
-async function getMap(){
-  const cached = sessionStorage.getItem(MAP_KEY);
-  if(cached) return JSON.parse(cached);
-  const data  = await fetchJSON("/dependency_map.json");
-  sessionStorage.setItem(MAP_KEY, JSON.stringify(data));
-  return data;
-}
+/* ───── helpers ───── */
+async function j(u){const r=await fetch(u);if(!r.ok)throw await r.text();return r.json();}
+function clearCache(){sessionStorage.removeItem(CACHE);}
+function fmtAge(sec){if(sec<60)return sec+' s';const m=Math.round(sec/60);return m+' m';}
 
-/* card builder ----------------------------------------------------- */
-function makeCard(id, info){
-  const div = document.createElement('div');
-  div.className = 'card';
-  div.dataset.friendly = info.friendly_name.toLowerCase();
+/* ───── build page ───── */
+async function build(force){
+  if(force) clearCache();
+  const start=Date.now();
+  document.getElementById('spinner').style.display='flex';
 
-  let html = `<h2>${info.friendly_name}</h2><ul><li><strong>${id}</strong></li>`;
+  let map;
+  const c=sessionStorage.getItem(CACHE);
+  if(c&&!force){map=JSON.parse(c);}else{map=await j('/dependency_map.json');sessionStorage.setItem(CACHE,JSON.stringify(map));}
 
-  info.entities.forEach(e=>{
-     const cls  = e.state==='unavailable' ? 'entity-off' : '';
-     const unit = e.unit ? ` ${e.unit}` : '';
-     html += `<li class="${cls}">${e.id} – <em>${e.state}${unit}</em></li>`;
-  });
+  const {generated_at,...summary}=map._summary;
+  const ageSec=Math.round((Date.now()-Date.parse(generated_at))/1000);
+  document.getElementById('age-chip').textContent='updated '+fmtAge(ageSec)+' ago';
+  document.getElementById('summary').textContent=`${summary.total} auto · ${summary.unknown+summary.offline+summary.stale} alerts`;
 
-  if(info.unknown_triggers.length){
-    html += '<li class="warn">⚠ Unknown triggers</li>';
-    info.unknown_triggers.forEach(t => html += `<li class="warn">${t}</li>`);
-  }
-  if(info.offline_members.length){
-    html += '<li class="warn">⚠ Offline group members</li>';
-    info.offline_members.forEach(m => html += `<li class="warn">${m}</li>`);
-  }
-  if(info.stale_days !== null && info.stale_days >= info.stale_threshold){
-    html += `<li class="warn">⏰ Not run for ${info.stale_days} d</li>`;
-  }
-
-  div.innerHTML = html + '</ul>';
-  return div;
-}
-
-/* build page ------------------------------------------------------- */
-getMap().then(async map=>{
-  document.getElementById('spinner').style.display='none';
-
-  const { _summary: s, ...autos } = map;
-  document.getElementById('summary').textContent =
-    `${s.total} auto · ${s.unknown+s.offline+s.stale} alerts`;
-
-  const container = document.getElementById('cards');
-  Object.entries(autos).forEach(([id,info])=>container.appendChild(makeCard(id,info)));
-
-  // live alert badge
-  try{
-    const alerts = await fetchJSON("/alerts");
-    if(alerts.length){
-      const badge = document.createElement('span');
-      badge.className='warn';
-      badge.textContent = ` ${alerts.length} alerts`;
-      document.querySelector('header').appendChild(badge);
+  const list=document.getElementById('list');list.innerHTML='';
+  Object.entries(map).filter(([k])=>!k.startsWith('_')).forEach(([id,info])=>{
+    const sec=document.createElement('details');
+    sec.className='section'; sec.open=false;
+    sec.innerHTML=`<summary><a href="${info.ui_link}" target="_blank">${info.friendly_name}</a></summary>`;
+    const ul=document.createElement('ul');
+    info.entities.forEach(e=>{
+      const off=e.state==='unavailable';
+      const stale=e.age>120;
+      ul.insertAdjacentHTML('beforeend',
+        `<li class="${off?'off':''}">${e.id} = <span class="val">${e.state}${e.unit?' '+e.unit:''}</span> <span class="age ${stale?'off':''}">• ${fmtAge(e.age)} ago</span></li>`);
+    });
+    if(info.unknown_triggers.length){
+      ul.insertAdjacentHTML('beforeend','<li class="warn">⚠ unknown triggers</li>');
+      info.unknown_triggers.forEach(t=>ul.insertAdjacentHTML('beforeend',`<li class="warn">${t}</li>`));
     }
-  }catch(e){console.warn("Alerts fetch failed",e);}
-}).catch(err=>{
-  document.getElementById('spinner').textContent='Error loading data';
-  console.error(err);
-});
+    if(info.offline_members.length){
+      ul.insertAdjacentHTML('beforeend','<li class="warn">⚠ offline members</li>');
+      info.offline_members.forEach(m=>ul.insertAdjacentHTML('beforeend',`<li class="warn">${m}</li>`));
+    }
+    if(info.stale_days!==null&&info.stale_days>=info.stale_threshold){
+      ul.insertAdjacentHTML('beforeend',`<li class="warn">⏰ not run for ${info.stale_days} d</li>`);
+    }
+    sec.appendChild(ul); list.appendChild(sec);
+  });
 
-/* search filter ---------------------------------------------------- */
-document.getElementById('search').addEventListener('input', e=>{
-  const q = e.target.value.toLowerCase();
-  document.querySelectorAll('.card').forEach(c=>{
-    c.style.display = c.dataset.friendly.includes(q) ? '' : 'none';
+  document.getElementById('spinner').style.display='none';
+  console.info('rendered in',Date.now()-start,'ms');
+}
+build(false);
+
+/* search filter */
+document.getElementById('search').addEventListener('input',e=>{
+  const q=e.target.value.toLowerCase();
+  document.querySelectorAll('.section').forEach(s=>{
+    s.style.display=s.querySelector('summary').textContent.toLowerCase().includes(q)?'':'none';
   });
 });
+
+/* refresh button */
+document.getElementById('refresh').onclick=()=>build(true);
 </script>
 </body>
 </html>
