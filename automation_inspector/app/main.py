@@ -87,25 +87,21 @@ async def orphaned_helpers():
 
 
 # ───────── alerts & suppression ─────────
+# … file header unchanged …
 def collect_alerts(map_data: dict) -> List[dict]:
-    alerts: List[dict] = []
-
+    alerts=[]
     for aid, info in map_data.items():
-        if info["unknown_triggers"] and aid not in IGNORED:
-            alerts.append(
-                {"id": aid, "type": "unknown_trigger", "details": info["unknown_triggers"]}
-            )
-        if info["offline_members"] and aid not in IGNORED:
-            alerts.append(
-                {"id": aid, "type": "offline_members", "details": info["offline_members"]}
-            )
-        if (
-            info["stale_days"] is not None
-            and info["stale_days"] >= info["stale_threshold"]
-            and aid not in IGNORED
-        ):
-            alerts.append({"id": aid, "type": "stale", "days": info["stale_days"]})
+        if aid.startswith("_"):       # skip summary
+            continue
+        if info.get("unknown_triggers") and aid not in IGNORED:
+            alerts.append({"id": aid, "type": "unknown", "details": info["unknown_triggers"]})
+        if info.get("offline_members") and aid not in IGNORED:
+            alerts.append({"id": aid, "type": "offline", "details": info["offline_members"]})
+        if (sd:=info.get("stale_days")) is not None and sd>=info["stale_threshold"] and aid not in IGNORED:
+            alerts.append({"id": aid, "type": "stale", "days": sd})
     return alerts
+# … rest of file unchanged …
+
 
 
 @app.get("/alerts")
