@@ -48,14 +48,22 @@
     }
 
     /* Dark Mode Overrides */
-    .dark-mode body,
-    .dark-mode th,
-    .dark-mode td,
-    .dark-mode code,
+    .dark-mode body {
+      background-color: #222;
+      color: #fff;
+    }
     .dark-mode a {
-      background-color: #222 !important;
+      color: #fff !important;
+    }
+    .dark-mode code {
+      background: #444 !important;
       color: #fff !important;
       border-color: #555 !important;
+    }
+    .dark-mode code.bad {
+      background: #600 !important;
+      color: #fdd !important;
+      border-color: #a33 !important;
     }
     .dark-mode table {
       background: #333 !important;
@@ -63,14 +71,7 @@
     .dark-mode tr:nth-child(even) {
       background: #2a2a2a !important;
     }
-    .dark-mode code {
-      background: #444 !important;
-    }
-    .dark-mode code.bad {
-      background: #600 !important;
-      color: #fdd !important;
-      border-color: #a33 !important;
-    }
+    /* we deliberately do NOT override td here, so inline styles with !important will show */
 
     /* Other styling */
     h1 { margin: .2rem 0 1rem 0 }
@@ -130,7 +131,6 @@
 <script>
   let DATA = {};
 
-  // Detect Ingress vs direct
   const isIngress = window.location.pathname.includes('/api/hassio_ingress');
   const HA_BASE = isIngress
     ? ''
@@ -145,7 +145,7 @@
     const tbody = document.querySelector("#tbl tbody");
     tbody.innerHTML = "";
     const errOnly    = document.getElementById("errOnly").checked;
-    const runFilter  = document.getElementById("runFilter").value;  // "all", "1","10","20","30","-30","-90"
+    const runFilter  = document.getElementById("runFilter").value;
     const searchTerm = document.getElementById("searchInput").value.toLowerCase();
 
     let errCount = 0, entCount = 0, badEnts = 0;
@@ -154,7 +154,6 @@
       const hasBad = info.entities.some(e => !e.ok);
       if (errOnly && !hasBad) return;
 
-      // Date-range filter
       if (runFilter !== "all") {
         const lastTs = info.last_triggered
           ? new Date(info.last_triggered).getTime()
@@ -163,17 +162,13 @@
           ? (Date.now() - lastTs) / (1000*60*60*24)
           : Infinity;
         const n = Math.abs(Number(runFilter));
-
         if (runFilter.startsWith("-")) {
-          // older than N days
           if (daysOld <= n) return;
         } else {
-          // last N days
           if (daysOld > n) return;
         }
       }
 
-      // Search filter
       if (searchTerm) {
         const nameMatch = info.friendly_name.toLowerCase().includes(searchTerm);
         const entMatch  = info.entities.some(e =>
@@ -189,21 +184,18 @@
         ? `<a href="${HA_BASE}/config/automation/edit/${info.config_id}" target="_blank">▶</a> `
         : "";
 
-      // Last-run display & color
-      let lastRunDisplay = "—";
-      let lastStyle = "";
+      // Last-run cell with !important to override dark-mode row bg
+      let lastRunDisplay = "—", lastStyle = "";
       if (info.last_triggered) {
-        const lastDate = new Date(info.last_triggered);
-        lastRunDisplay = lastDate.toLocaleString();
-        const daysOld = (Date.now() - lastDate.getTime()) / (1000*60*60*24);
-        const maxDays = 90;
-        const pct = Math.min(daysOld, maxDays) / maxDays;
-        const hue = Math.floor((1 - pct) * 120);
-        lastStyle = `background-color: hsl(${hue},100%,80%);`;
+        const d = new Date(info.last_triggered);
+        lastRunDisplay = d.toLocaleString();
+        const daysOld = (Date.now() - d.getTime())/(1000*60*60*24);
+        const pct = Math.min(daysOld,90)/90;
+        const hue = Math.floor((1-pct)*120);
+        lastStyle = `background-color: hsl(${hue},100%,80%) !important;`;
       }
       const lastCell = `<td style="${lastStyle}">${lastRunDisplay}</td>`;
 
-      // Entities column
       const ents = info.entities.map(e => {
         const cls  = e.ok ? "" : "bad";
         if (!e.ok) badEnts++;
@@ -243,7 +235,6 @@
   document.getElementById("searchInput").addEventListener("keyup", e => {
     if (e.key === "Enter") render();
   });
-
   document.getElementById("toggleDark").addEventListener("click", () => {
     document.documentElement.classList.toggle('dark-mode');
     localStorage.setItem(
@@ -251,11 +242,9 @@
       document.documentElement.classList.contains('dark-mode')
     );
   });
-
   if (localStorage.getItem('dark-mode') === 'true') {
     document.documentElement.classList.add('dark-mode');
   }
-
   load();
 </script>
 </body>
