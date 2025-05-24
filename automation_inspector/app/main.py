@@ -1,91 +1,116 @@
 """
-main.py – FastAPI entry-point for the add-on.
+main.py – FastAPI entry-point for the Automation-Inspector add-on.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 from time import time
 from typing import Any, Dict, List, Set
 
-from fastapi import FastAPI, Response, HTTPException
-from fastapi.responses import JSONResponse, PlainTextResponse, FileResponse
-from starlette.requests import Request
 import uvicorn
-import os
-import json
-import logging
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+
 from .dependency_map import build_map
 from .renderer import lovelace_from_map
 
-_LOGGER = logging.getLogger(__name__)
+app = FastAPI()
+CACHE: Dict[str, tuple[Any, float]] = {}   # key -> (value, ts)
+IGNORED: Set[str] = set()                  # user-suppressed alert IDs
+TTL = 30                                   # seconds – cache for map & yaml
 
-app  = FastAPI()
-CACHE: Dict[str, tuple[Any, float]] = {}
-IGNORED: Set[str] = set()          # ids suppressed in /alerts
 
-
-# ───────────────────────────── helper ─────────────────────────────
-def _cached(key: str, ttl: int, builder):
+# ─────────────────────────── helpers ────────────────────────────
+async def get_map_cached() -> dict:
     now = time()
-    if key not in CACHE or now - CACHE[key][1] > ttl:
-        CACHE[key] = (builder(), now)
+    if "MAP" not in CACHE or now - CACHE["MAP"][1] > TTL:
+        CACHE["MAP"] = (await build_map(), now)
+    return CACHE["MAP"][0]
+
+
+def cache_set(key: str, value: Any) -> None:
+    CACHE[key] = (value, time())
+
+
+def cache_get(key: str, ttl: int | None = None) -> Any | None:
+    if key not in CACHE:
+        return None
+    if ttl is not None and time() - CACHE[key][1] > ttl:
+        return None
     return CACHE[key][0]
 
 
-# ───────────────────────────── routes ─────────────────────────────
+# ───────────────────────────── routes ───────────────────────────
 @app.get("/dependency_map.json")
 async def dependency_map():
-    dep_map = _cached("MAP", 30, lambda: asyncio.run(build_map()))
-    return JSONResponse(dep_map)
+    return JSONResponse(await get_map_cached())
 
 
 @app.get("/dashboard.yaml")
 async def dashboard_yaml():
-    dep_map = _cached("MAP", 30, lambda: asyncio.run(build_map()))
-    yaml    = _cached("YAML", 30, lambda: lovelace_from_map(dep_map))
+    yaml = cache_get("YAML", TTL)
+    if yaml is None:
+        yaml = lovelace_from_map(await get_map_cached())
+        cache_set("YAML", yaml)
     return PlainTextResponse(yaml, media_type="text/yaml")
 
 
 @app.get("/orphaned_helpers.json")
 async def orphaned_helpers():
-    def _builder():
-        dep_map   = asyncio.run(build_map())
-        used      = set(sum((v["entities"] for v in dep_map.values()), []))
-        all_states = asyncio.run(build_map.__globals__['ha_get']("/states"))
-        helpers   = [
-            s["entity_id"] for s in all_states
-            if s["entity_id"].split(".")[0] in (
-                "input_boolean", "input_number", "input_text",
-                "input_select", "input_datetime"
-            )
-        ]
-        return sorted(h for h in helpers if h not in used)
-    return JSONResponse(_cached("ORPHANS", 300, _builder))
+    cached = cache_get("ORPHANS", 300)
+    if cached is not None:
+        return JSONResponse(cached)
+
+    dep_map = await get_map_cached()
+    used = set(sum((v["entities"] for v in dep_map.values()), []))
+
+    # live call for all states
+    states = await build_map.__globals__["ha_get"]("/states")
+    helpers = [
+        s["entity_id"]
+        for s in states
+        if s["entity_id"].split(".")[0]
+        in (
+            "input_boolean",
+            "input_number",
+            "input_text",
+            "input_select",
+            "input_datetime",
+        )
+    ]
+    orphans = sorted(h for h in helpers if h not in used)
+    cache_set("ORPHANS", orphans)
+    return JSONResponse(orphans)
 
 
-# ─────────── alerts & suppression (simple, in-memory) ────────────
-def _collect_alerts() -> List[dict]:
-    dep_map = _cached("MAP", 30, lambda: asyncio.run(build_map()))
+# ───────── alerts & suppression ─────────
+def collect_alerts(map_data: dict) -> List[dict]:
     alerts: List[dict] = []
 
-    for aid, info in dep_map.items():
+    for aid, info in map_data.items():
         if info["unknown_triggers"] and aid not in IGNORED:
-            alerts.append({"source": aid, "type": "unknown_trigger", "details": info["unknown_triggers"]})
-
+            alerts.append(
+                {"id": aid, "type": "unknown_trigger", "details": info["unknown_triggers"]}
+            )
         if info["offline_members"] and aid not in IGNORED:
-            alerts.append({"source": aid, "type": "offline_members", "details": info["offline_members"]})
-
-        if info["stale_days"] is not None and \
-           info["stale_days"] >= info["stale_threshold"] and aid not in IGNORED:
-            alerts.append({"source": aid, "type": "stale", "days": info["stale_days"]})
-
+            alerts.append(
+                {"id": aid, "type": "offline_members", "details": info["offline_members"]}
+            )
+        if (
+            info["stale_days"] is not None
+            and info["stale_days"] >= info["stale_threshold"]
+            and aid not in IGNORED
+        ):
+            alerts.append({"id": aid, "type": "stale", "days": info["stale_days"]})
     return alerts
 
 
 @app.get("/alerts")
 async def alerts():
-    return JSONResponse(_collect_alerts())
+    return JSONResponse(collect_alerts(await get_map_cached()))
 
 
 @app.post("/ignore")
@@ -102,13 +127,18 @@ async def unignore(alert: dict):
     return {"ignored": list(IGNORED)}
 
 
-# ───────────────────────── static UI ─────────────────────────────
+# ───────────── static UI ─────────────
 @app.get("/{path:path}")
 async def root(path: str = ""):
     ui = os.path.join(os.path.dirname(__file__), "..", "www", "index.html")
     return FileResponse(ui)
 
 
-# ──────────────────────────── run ────────────────────────────────
+# ─────────────────────────── run ────────────────────────────────
 if __name__ == "__main__":
-    uvicorn.run("automation_inspector.app.main:app", host="0.0.0.0", port=3000, reload=False)
+    uvicorn.run(
+        "automation_inspector.app.main:app",
+        host="0.0.0.0",
+        port=1234,
+        reload=False,
+    )
