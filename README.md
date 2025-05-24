@@ -10,7 +10,7 @@
 
 ---
 
-## 🏷️ Release v0.3.3 Highlights
+## 🏷️ Release Highlights
 
 - **Ingress & Web UI integration** – works seamlessly via HA’s Ingress (no blank page).  
 - **Dark mode support** – full colour theming with CSS variables and forced white text.  
