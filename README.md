@@ -36,6 +36,15 @@ See [RELEASE_NOTES.md](RELEASE_NOTES.md) for full changelog.
 
 ---
 
+## Screenshot
+
+<p align="center">
+  <a href="https://github.com/ITSpecialist111/Automation-Inspector/blob/main/screenshot-light.png " target="_blank">
+    <img src="https://github.com/ITSpecialist111/Automation-Inspector/blob/main/screenshot-light.png " alt="screenshot">
+  </a>
+</p>
+---
+
 ## 🚀 Installation
 
 1. **Add repository** in Home Assistant Add‑on Store:
