@@ -84,6 +84,7 @@
     #controls { margin-bottom: 1em; }
     #controls select,
     #controls input { margin-left: .3em; }
+    #orphans-container { margin-top: 1.5rem; display: none; }
   </style>
 </head>
 <body>
@@ -94,6 +95,9 @@
 
 <label>
   <input type="checkbox" id="errOnly"> show errors only
+</label>
+<label>
+  <input type="checkbox" id="showOrphans"> show orphaned helpers
 </label>
 <button id="toggleDark">Toggle Dark Mode</button>
 
@@ -128,8 +132,15 @@
   <tbody></tbody>
 </table>
 
+<!-- Orphan list -->
+<div id="orphans-container">
+  <h2>Orphaned Helpers</h2>
+  <ul id="orphans"></ul>
+</div>
+
 <script>
   let DATA = {};
+  let STATES = [];
 
   const isIngress = window.location.pathname.includes('/api/hassio_ingress');
   const HA_BASE = isIngress
@@ -141,97 +152,149 @@
     DATA = await resp.json();
   }
 
+  async function fetchStates(){
+    try {
+      const resp = await fetch(`${HA_BASE}/api/states`);
+      STATES = await resp.json();
+    } catch(err) {
+      console.warn('Could not fetch HA states for orphan detection', err);
+      STATES = [];
+    }
+  }
+
   function render(){
     const tbody = document.querySelector("#tbl tbody");
     tbody.innerHTML = "";
-    const errOnly    = document.getElementById("errOnly").checked;
-    const runFilter  = document.getElementById("runFilter").value;
-    const searchTerm = document.getElementById("searchInput").value.toLowerCase();
+    const errOnly      = document.getElementById("errOnly").checked;
+    const showOrphans  = document.getElementById("showOrphans").checked;
+    const runFilter    = document.getElementById("runFilter").value;
+    const searchTerm   = document.getElementById("searchInput").value.toLowerCase();
 
     let errCount = 0, entCount = 0, badEnts = 0;
 
-    Object.values(DATA).forEach(info => {
-      const hasBad = info.entities.some(e => !e.ok);
-      if (errOnly && !hasBad) return;
+    // render automations table unless we're only showing orphans
+    if (!showOrphans) {
+      Object.values(DATA).forEach(info => {
+        const hasBad = info.entities.some(e => !e.ok);
+        if (errOnly && !hasBad) return;
 
-      if (runFilter !== "all") {
-        const lastTs = info.last_triggered
-          ? new Date(info.last_triggered).getTime()
-          : null;
-        const daysOld = lastTs
-          ? (Date.now() - lastTs) / (1000*60*60*24)
-          : Infinity;
-        const n = Math.abs(Number(runFilter));
-        if (runFilter.startsWith("-")) {
-          if (daysOld <= n) return;
-        } else {
-          if (daysOld > n) return;
+        // date-range filter
+        if (runFilter !== "all") {
+          const lastTs = info.last_triggered
+            ? new Date(info.last_triggered).getTime()
+            : null;
+          const daysOld = lastTs
+            ? (Date.now() - lastTs)/(1000*60*60*24)
+            : Infinity;
+          const n = Math.abs(Number(runFilter));
+          if (runFilter.startsWith("-")) {
+            if (daysOld <= n) return;
+          } else {
+            if (daysOld > n) return;
+          }
         }
-      }
 
-      if (searchTerm) {
-        const nameMatch = info.friendly_name.toLowerCase().includes(searchTerm);
-        const entMatch  = info.entities.some(e =>
-          e.id.toLowerCase().includes(searchTerm)
-        );
-        if (!nameMatch && !entMatch) return;
-      }
+        // search filter
+        if (searchTerm) {
+          const nameMatch = info.friendly_name.toLowerCase().includes(searchTerm);
+          const entMatch  = info.entities.some(e =>
+            e.id.toLowerCase().includes(searchTerm)
+          );
+          if (!nameMatch && !entMatch) return;
+        }
 
-      const tr = document.createElement("tr");
-      if (!info.enabled) tr.classList.add("disabled");
+        const tr = document.createElement("tr");
+        if (!info.enabled) tr.classList.add("disabled");
 
-      const trace = info.config_id
-        ? `<a href="${HA_BASE}/config/automation/edit/${info.config_id}" target="_blank">▶</a> `
-        : "";
+        const trace = info.config_id
+          ? `<a href="${HA_BASE}/config/automation/edit/${info.config_id}" target="_blank">▶</a> `
+          : "";
 
-      // Last-run cell with !important to override dark-mode row bg
-      let lastRunDisplay = "—", lastStyle = "";
-      if (info.last_triggered) {
-        const d = new Date(info.last_triggered);
-        lastRunDisplay = d.toLocaleString();
-        const daysOld = (Date.now() - d.getTime())/(1000*60*60*24);
-        const pct = Math.min(daysOld,90)/90;
-        const hue = Math.floor((1-pct)*120);
-        lastStyle = `background-color: hsl(${hue},100%,80%) !important;`;
-      }
-      const lastCell = `<td style="${lastStyle}">${lastRunDisplay}</td>`;
+        // Last-run cell
+        let lastRunDisplay = "—", lastStyle = "";
+        if (info.last_triggered) {
+          const d = new Date(info.last_triggered);
+          lastRunDisplay = d.toLocaleString();
+          const daysOld = (Date.now() - d.getTime())/(1000*60*60*24);
+          const pct = Math.min(daysOld,90)/90;
+          const hue = Math.floor((1-pct)*120);
+          lastStyle = `background-color: hsl(${hue},100%,80%) !important;`;
+        }
+        const lastCell = `<td style="${lastStyle}">${lastRunDisplay}</td>`;
 
-      const ents = info.entities.map(e => {
-        const cls  = e.ok ? "" : "bad";
-        if (!e.ok) badEnts++;
-        const link = `${HA_BASE}/developer-tools/state?entity_id=${encodeURIComponent(e.id)}`;
-        return `<a href="${link}" target="_blank">
-                  <code class="${cls}">${e.id}: ${e.state}</code>
-                </a>`;
-      }).join(" ");
+        // Entities column
+        const ents = info.entities.map(e => {
+          const cls  = e.ok ? "" : "bad";
+          if (!e.ok) badEnts++;
+          const link = `${HA_BASE}/developer-tools/state?entity_id=${encodeURIComponent(e.id)}`;
+          return `<a href="${link}" target="_blank">
+                    <code class="${cls}">${e.id}: ${e.state}</code>
+                  </a>`;
+        }).join(" ");
 
-      entCount += info.entities.length;
-      if (hasBad) errCount++;
+        entCount += info.entities.length;
+        if (hasBad) errCount++;
 
-      tr.innerHTML = `
-        <td>${trace}<strong>${info.friendly_name}</strong></td>
-        ${lastCell}
-        <td>${ents}</td>
-      `;
-      tbody.appendChild(tr);
-    });
+        tr.innerHTML = `
+          <td>${trace}<strong>${info.friendly_name}</strong></td>
+          ${lastCell}
+          <td>${ents}</td>
+        `;
+        tbody.appendChild(tr);
+      });
 
+      document.getElementById("tbl").style.display = "";
+    } else {
+      tbody.innerHTML = "";
+      document.getElementById("tbl").style.display = "none";
+    }
+
+    // update banner
     const autoTotal = Object.keys(DATA).length;
     document.getElementById("banner").textContent =
       `${autoTotal} automations · ${entCount} entities — `
       + (errCount
           ? `${errCount} automations with issues, ${badEnts} bad entities`
           : `all OK`);
+
+    // orphaned helpers section
+    const oc = document.getElementById("orphans-container");
+    if (showOrphans) {
+      oc.style.display = "block";
+      const ul = document.getElementById("orphans");
+      ul.innerHTML = "";
+      // find all input_* helpers
+      const helpers = STATES.filter(s => s.entity_id.startsWith("input_"));
+      const referenced = new Set();
+      Object.values(DATA).forEach(info => {
+        info.entities.forEach(e => referenced.add(e.id));
+      });
+      helpers.forEach(h => {
+        if (!referenced.has(h.entity_id)) {
+          const li = document.createElement("li");
+          const link = `${HA_BASE}/developer-tools/state?entity_id=${encodeURIComponent(h.entity_id)}`;
+          li.innerHTML = `<a href="${link}" target="_blank">${h.entity_id}: ${h.state}</a>`;
+          ul.appendChild(li);
+        }
+      });
+    } else {
+      oc.style.display = "none";
+    }
   }
 
   async function load(){
     await fetchData();
+    await fetchStates();
     render();
   }
 
-  document.getElementById("errOnly").addEventListener("change", render);
-  document.getElementById("runFilter").addEventListener("change", render);
-  document.getElementById("searchBtn").addEventListener("click", render);
+  // event listeners
+  ["change","click"].forEach(evt => {
+    document.getElementById("errOnly").addEventListener("change", render);
+    document.getElementById("showOrphans").addEventListener("change", render);
+    document.getElementById("runFilter").addEventListener("change", render);
+    document.getElementById("searchBtn").addEventListener("click", render);
+  });
   document.getElementById("searchInput").addEventListener("keyup", e => {
     if (e.key === "Enter") render();
   });
@@ -245,6 +308,7 @@
   if (localStorage.getItem('dark-mode') === 'true') {
     document.documentElement.classList.add('dark-mode');
   }
+
   load();
 </script>
 </body>
