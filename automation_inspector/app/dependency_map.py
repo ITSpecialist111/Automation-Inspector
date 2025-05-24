@@ -1,12 +1,10 @@
 """
 dependency_map.py – builds the JSON served at /dependency_map.json
 
-Features implemented
-────────────────────
-• entity extraction (regex)
+• pulls all states once
+• filters automation.* from that list (no /states/automation 404)
 • unknown / broken trigger detection
-• stale-automation flag
-• offline group-member detection
+• stale flag, offline group-members
 """
 
 from __future__ import annotations
@@ -22,7 +20,6 @@ import httpx
 
 _LOGGER = logging.getLogger(__name__)
 
-# ─────────────────────────────── constants ────────────────────────────────
 ENTITY_RE = re.compile(
     r"\b("
     r"alarm_control_panel|automation|binary_sensor|button|calendar|camera|climate|"
@@ -41,15 +38,14 @@ STALE_DAYS       = int(os.getenv("INSPECTOR_STALE_DAYS", "30"))
 http: httpx.AsyncClient | None = None
 
 
-# ─────────────────────────────── helpers ──────────────────────────────────
+# ─────────────────────────── helpers ────────────────────────────
 async def ha_get(path: str) -> Any:
-    """GET helper through the Supervisor proxy."""
     global http
     if http is None:
         http = httpx.AsyncClient(
             base_url=SUPERVISOR_URL,
             headers={"Authorization": f"Bearer {SUPERVISOR_TOKEN}"},
-            timeout=15,
+            timeout=20,
         )
     r = await http.get(path)
     r.raise_for_status()
@@ -57,31 +53,30 @@ async def ha_get(path: str) -> Any:
 
 
 def collect_entities(obj: Any) -> List[str]:
-    """Recursively pull entity_ids from a Home-Assistant structure."""
     found: set[str] = set()
-
     if isinstance(obj, str):
         found.update(ENTITY_RE.findall(obj))
     elif isinstance(obj, list):
-        for item in obj:
-            found.update(collect_entities(item))
+        for itm in obj:
+            found.update(collect_entities(itm))
     elif isinstance(obj, dict):
         for v in obj.values():
             found.update(collect_entities(v))
-
     return list(found)
 
 
-# ─────────────────────────────── builder ──────────────────────────────────
+# ─────────────────────────── builder ────────────────────────────
 async def build_map() -> dict[str, Any]:
-    automations = await ha_get("/states/automation")
-    states      = await ha_get("/states")
+    # one request → all states
+    states = await ha_get("/states")
+
+    automations = [s for s in states if s["entity_id"].startswith("automation.")]
     all_entities = {s["entity_id"] for s in states}
 
     now_utc   = datetime.now(timezone.utc)
     state_map = {s["entity_id"]: s for s in states}
 
-    # offline members for every group.*
+    # offline members lookup for every group.*
     offline_by_group: dict[str, List[str]] = {}
     for st in states:
         if st["entity_id"].startswith("group."):
@@ -96,14 +91,14 @@ async def build_map() -> dict[str, Any]:
     dep_map: dict[str, Any] = {}
 
     for auto in automations:
-        auto_id  = auto["entity_id"]
-        num_id   = auto["attributes"].get("id")  # numeric id for UI automations
+        auto_id = auto["entity_id"]
+        num_id  = auto["attributes"].get("id")  # UI automations have numeric id
 
-        # ─── fetch full config ────────────────────────────────────────────────
+        # full config fetch (handle YAML automations gracefully)
         try:
             if num_id:
                 config = await ha_get(f"/config/automation/config/{num_id}")
-            else:  # YAML automation – fall back to attributes
+            else:
                 config = {
                     "trigger":   auto["attributes"].get("trigger", []),
                     "condition": auto["attributes"].get("condition", []),
@@ -116,7 +111,6 @@ async def build_map() -> dict[str, Any]:
                 "condition": auto["attributes"].get("condition", []),
                 "action":    auto["attributes"].get("action", []),
             }
-        # ───────────────────────────────────────────────────────────────────────
 
         entities = collect_entities(config)
 
@@ -131,14 +125,14 @@ async def build_map() -> dict[str, Any]:
                     if eid not in all_entities:
                         unknown.append(eid)
 
-        # stale-automation calculation
+        # stale calculation
         last = auto["attributes"].get("last_triggered")
         stale_days = None
         if last:
             delta      = now_utc - datetime.fromisoformat(last)
             stale_days = delta.days
 
-        # offline members of referenced groups
+        # offline members referenced by automation groups
         offline_members: list[str] = []
         for e in entities:
             if e.startswith("group.") and e in offline_by_group:
