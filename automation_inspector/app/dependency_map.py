@@ -1,99 +1,77 @@
 """
-dependency_map.py – builds the JSON served at /dependency_map.json
-
-Adds for v0.3.1:
-  • 'enabled'   – True/False automation state
-  • 'config_id' – numeric id used by /config/automation/edit/<id> (Trace button)
-
-v0.3.4 change:
-  • suppress false-positive “entities” (services, non-existent IDs)
+renderer.py – turn the dependency map into a Lovelace dashboard YAML
 """
 
 from __future__ import annotations
-import os, re, yaml, httpx
-from typing import Any, Dict, List
 
-HA_URL  = "http://supervisor/core"
-TOKEN   = os.getenv("SUPERVISOR_TOKEN")
-HEADERS = {"Authorization": f"Bearer {TOKEN}"}
-
-ENTITY_RE = re.compile(
-    r"\b(?:sensor|binary_sensor|switch|light|climate|number|"
-    r"input_\w+|device_tracker)\.[0-9A-Za-z_]+\b"
-)
-
-# ---------------------------------------------------------------- helpers
-async def ha_get(path: str, *, json: bool = False) -> Any | None:
-    async with httpx.AsyncClient() as cli:
-        r = await cli.get(f"{HA_URL}{path}", headers=HEADERS, timeout=30)
-        if r.status_code in (403, 404):
-            return None
-        r.raise_for_status()
-        return r.json() if json else r.text
+import yaml
+from typing import Any
 
 
-def collect_entities(obj: Any) -> List[str]:
-    found: set[str] = set()
-    if obj is None:
-        return []
-    if isinstance(obj, str):
-        found.update(ENTITY_RE.findall(obj))
-    elif isinstance(obj, list):
-        for item in obj:
-            found.update(collect_entities(item))
-    elif isinstance(obj, dict):
-        for val in obj.values():
-            found.update(collect_entities(val))
-    return list(found)
+def lovelace_from_map(dep_map: dict[str, Any]) -> str:
+    view = {
+        "title": "Automation Inspector",
+        "path":  "automation_inspector",
+        "cards": [],
+    }
 
-# ---------------------------------------------------------------- main
-async def build_map() -> Dict[str, dict]:
-    states_raw = await ha_get("/api/states", json=True) or []
-    state_map  = {row["entity_id"]: row for row in states_raw}
-    autos      = [s for s in states_raw if s["entity_id"].startswith("automation.")]
-    dep: Dict[str, dict] = {}
-
-    for st in autos:
-        ent_id   = st["entity_id"]
-        nice     = st["attributes"].get("friendly_name", ent_id)
-        enabled  = (st["state"] == "on")
-        config_id = st["attributes"].get("id")            # numeric id
-        yaml_txt  = None
-
-        if config_id:
-            yaml_txt = await ha_get(f"/api/config/automation/config/{config_id}")
-        if yaml_txt is None:                              # fallback by slug
-            slug = ent_id.split(".", 1)[1]
-            yaml_txt = await ha_get(f"/api/config/automation/config/{slug}")
-
-        # extract raw IDs from YAML or attributes
-        if yaml_txt:
-            try:
-                ids = collect_entities(yaml.safe_load(yaml_txt) or {})
-            except yaml.YAMLError:
-                ids = []
-        else:
-            ids = collect_entities(st["attributes"])
-
-        # build rich entity list with state + ok flag,
-        # suppress false positives (services, non-existent IDs)
-        rich: List[dict] = []
-        seen = set()
-        for eid in sorted(ids):
-            if eid in seen or eid not in state_map:
-                continue
-            seen.add(eid)
-            row   = state_map[eid]
-            state = row["state"]
-            ok    = state not in ("unavailable", "unknown")
-            rich.append({"id": eid, "state": state, "ok": ok})
-
-        dep[ent_id] = {
-            "friendly_name": nice,
-            "enabled": enabled,
-            "config_id": config_id,
-            "entities": rich,
+    # sort by friendly name
+    for auto_id, info in sorted(dep_map.items(), key=lambda i: i[1]["friendly_name"].lower()):
+        card = {
+            "type": "entities",
+            "title": info["friendly_name"],
+            "entities": [auto_id],
         }
 
-    print("▶ built map with", len(dep), "automations")
-    return dep
+        # normal referenced entities
+        if info["entities"]:
+            card["entities"] += info["entities"]
+
+        # scripts subsection
+        scripts = [e for e in info["entities"] if e.startswith("script.")]
+        if scripts:
+            card["entities"] += [{"type": "divider"}, *scripts]
+
+        # unknown triggers
+        if info.get("unknown_triggers"):
+            card["entities"] += [
+                {"type": "divider"},
+                *[
+                    {
+                        "entity": ut,
+                        "name": f"⚠ {ut} (unknown)",
+                        "icon": "mdi:alert",
+                        "state_color": True,
+                    }
+                    for ut in info["unknown_triggers"]
+                ],
+            ]
+            card["icon"] = "mdi:alert"
+            card["icon_color"] = "red"
+
+        # offline group members
+        if info.get("offline_members"):
+            card["entities"] += [
+                {"type": "divider"},
+                *[
+                    {
+                        "entity": om,
+                        "name": f"⚠ {om} offline",
+                        "icon": "mdi:account-off",
+                        "state_color": True,
+                    }
+                    for om in info["offline_members"]
+                ],
+            ]
+            card.setdefault("icon", "mdi:account-off")
+            card.setdefault("icon_color", "orange")
+
+        # stale
+        if info.get("stale_days") is not None and \
+           info["stale_days"] >= info["stale_threshold"]:
+            card["icon"]       = "mdi:clock-alert"
+            card["icon_color"] = "purple"
+
+        view["cards"].append(card)
+
+    return yaml.dump({"views": [view]}, sort_keys=False, default_flow_style=False)
