@@ -2,17 +2,22 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Automation&nbsp;Inspector</title>
+<title>Automation Inspector</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-body{font-family:sans-serif;margin:0;background:#111;color:#eee}
-header{display:flex;align-items:center;gap:1rem;padding:.5rem 1rem;background:#222;position:sticky;top:0}
-#search{flex:1;padding:.4rem .6rem;border-radius:4px;border:1px solid #555;background:#000;color:#eee}
-#alert-count{font-size:.9rem;color:#f33}
+:root{
+  --bg:   var(--primary-background-color, #111);
+  --fg:   var(--primary-text-color,        #eee);
+  --warn: #f77;
+}
+body{font-family:sans-serif;margin:0;background:var(--bg);color:var(--fg)}
+header{display:flex;gap:1rem;align-items:center;padding:.5rem 1rem;background:#222;position:sticky;top:0}
+#search{flex:1;padding:.4rem .6rem;border-radius:4px;border:1px solid #555;background:#000;color:var(--fg)}
+#alert-count{font-size:.9rem;color:var(--warn)}
 .card{margin:1rem;border:1px solid #444;border-radius:6px;padding:.6rem;background:#1a1a1a}
 .card ul{margin:.3rem 0 0 1rem;padding:0}
 .card li{line-height:1.4}
-.warn{color:#f77}
+.warn{color:var(--warn)}
 h2{margin:.2rem 0 .4rem;font-size:1.1rem}
 </style>
 </head>
@@ -26,65 +31,74 @@ h2{margin:.2rem 0 .4rem;font-size:1.1rem}
 <main id="cards"></main>
 
 <script>
-const MAP_KEY="inspector_map_v2";
+const MAP_KEY = "inspector_map_v2";
 
-async function fetchJSON(u){const r=await fetch(u);return r.json();}
+async function fetchJSON(u){
+  const r = await fetch(u);
+  if(!r.ok){throw new Error(await r.text());}
+  return r.json();
+}
 
 // sessionStorage cache
 async function getMap(){
-  const cached=sessionStorage.getItem(MAP_KEY);
-  if(cached){return JSON.parse(cached);}
-  const data=await fetchJSON("/dependency_map.json");
-  sessionStorage.setItem(MAP_KEY,JSON.stringify(data));
+  const cached = sessionStorage.getItem(MAP_KEY);
+  if(cached){ return JSON.parse(cached); }
+  const data = await fetchJSON("/dependency_map.json");   // absolute path → works via Ingress & direct
+  sessionStorage.setItem(MAP_KEY, JSON.stringify(data));
   return data;
 }
 
-function makeCard(id,info){
-  const div=document.createElement("div");
-  div.className="card";
-  div.dataset.friendly=info.friendly_name.toLowerCase();
+function makeCard(id, info){
+  const div = document.createElement("div");
+  div.className = "card";
+  div.dataset.friendly = info.friendly_name.toLowerCase();
 
-  let html=`<h2>${info.friendly_name}</h2><ul><li><strong>${id}</strong></li>`;
-
-  info.entities.forEach(e=>html+=`<li>${e}</li>`);
+  let html = `<h2>${info.friendly_name}</h2><ul><li><strong>${id}</strong></li>`;
+  info.entities.forEach(e => html += `<li>${e}</li>`);
 
   if(info.unknown_triggers.length){
-    html+='<li class="warn">⚠ Unknown triggers</li>';
-    info.unknown_triggers.forEach(t=>html+=`<li class="warn">${t}</li>`);
+    html += '<li class="warn">⚠ Unknown triggers</li>';
+    info.unknown_triggers.forEach(t => html += `<li class="warn">${t}</li>`);
   }
-
   if(info.offline_members.length){
-    html+='<li class="warn">⚠ Offline group members</li>';
-    info.offline_members.forEach(m=>html+=`<li class="warn">${m}</li>`);
+    html += '<li class="warn">⚠ Offline group members</li>';
+    info.offline_members.forEach(m => html += `<li class="warn">${m}</li>`);
+  }
+  if(info.stale_days !== null && info.stale_days >= info.stale_threshold){
+    html += `<li class="warn">⏰ Not run for ${info.stale_days} d</li>`;
   }
 
-  if(info.stale_days!==null && info.stale_days>=info.stale_threshold){
-    html+='<li class="warn">⏰ Not run for '+info.stale_days+' d</li>';
-  }
-
-  html+="</ul>";
-  div.innerHTML=html;
+  html += "</ul>";
+  div.innerHTML = html;
   return div;
 }
 
 async function build(){
-  const map=await getMap();
-  const container=document.getElementById("cards");
-  container.innerHTML="";
-  Object.entries(map).forEach(([id,info])=>{
-    container.appendChild(makeCard(id,info));
-  });
+  let map;
+  try{ map = await getMap(); }
+  catch(e){
+    console.error(e);
+    sessionStorage.removeItem(MAP_KEY);
+    alert("Automation Inspector couldn’t load data.\nCheck the add-on logs.");
+    return;
+  }
+  const container = document.getElementById("cards");
+  container.innerHTML = "";
+  Object.entries(map).forEach(([id,info]) => container.appendChild(makeCard(id,info)));
+
   // alerts badge
-  const alerts=await fetchJSON("/alerts");
-  if(alerts.length){document.getElementById("alert-count").textContent=`${alerts.length} alerts`; }
+  try{
+    const alerts = await fetchJSON("/alerts");
+    if(alerts.length){ document.getElementById("alert-count").textContent = `${alerts.length} alerts`; }
+  }catch(e){ console.warn("Alerts fetch failed", e); }
 }
 build();
 
 // search
-document.getElementById("search").addEventListener("input",e=>{
-  const q=e.target.value.toLowerCase();
+document.getElementById("search").addEventListener("input", e=>{
+  const q = e.target.value.toLowerCase();
   document.querySelectorAll(".card").forEach(c=>{
-    c.style.display=c.dataset.friendly.includes(q)?"":"none";
+    c.style.display = c.dataset.friendly.includes(q) ? "" : "none";
   });
 });
 </script>

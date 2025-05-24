@@ -1,24 +1,28 @@
 """
 dependency_map.py – builds the JSON served at /dependency_map.json
-Implements:
- • entity extraction
- • unknown / broken trigger detection
- • stale-automation flag
- • offline group-member detection
+
+Features implemented
+────────────────────
+• entity extraction (regex)
+• unknown / broken trigger detection
+• stale-automation flag
+• offline group-member detection
 """
 
 from __future__ import annotations
 
-import asyncio, os, re, logging
+import asyncio
+import logging
+import os
+import re
 from datetime import datetime, timezone
-from time import time
 from typing import Any, List
 
 import httpx
 
 _LOGGER = logging.getLogger(__name__)
 
-# ──────────────────────────────── constants ──────────────────────────────────
+# ─────────────────────────────── constants ────────────────────────────────
 ENTITY_RE = re.compile(
     r"\b("
     r"alarm_control_panel|automation|binary_sensor|button|calendar|camera|climate|"
@@ -30,30 +34,30 @@ ENTITY_RE = re.compile(
     re.I,
 )
 
-SUPERVISOR_TOKEN = os.getenv("SUPERVISOR_TOKEN")
 SUPERVISOR_URL   = "http://supervisor/core/api"
+SUPERVISOR_TOKEN = os.getenv("SUPERVISOR_TOKEN")
 STALE_DAYS       = int(os.getenv("INSPECTOR_STALE_DAYS", "30"))
 
-client: httpx.AsyncClient | None = None
+http: httpx.AsyncClient | None = None
 
 
-# ──────────────────────────────── helpers ─────────────────────────────────────
+# ─────────────────────────────── helpers ──────────────────────────────────
 async def ha_get(path: str) -> Any:
-    """Minimal wrapper around the supervisor proxy API."""
-    global client
-    if client is None:
-        client = httpx.AsyncClient(
+    """GET helper through the Supervisor proxy."""
+    global http
+    if http is None:
+        http = httpx.AsyncClient(
             base_url=SUPERVISOR_URL,
             headers={"Authorization": f"Bearer {SUPERVISOR_TOKEN}"},
             timeout=15,
         )
-    r = await client.get(path)
+    r = await http.get(path)
     r.raise_for_status()
     return r.json()
 
 
 def collect_entities(obj: Any) -> List[str]:
-    """Recursively pull entity_ids out of a Home-Assistant automation structure."""
+    """Recursively pull entity_ids from a Home-Assistant structure."""
     found: set[str] = set()
 
     if isinstance(obj, str):
@@ -68,9 +72,8 @@ def collect_entities(obj: Any) -> List[str]:
     return list(found)
 
 
-# ──────────────────────────────── builder ─────────────────────────────────────
+# ─────────────────────────────── builder ──────────────────────────────────
 async def build_map() -> dict[str, Any]:
-    """Return the full dependency-map used by /dependency_map.json."""
     automations = await ha_get("/states/automation")
     states      = await ha_get("/states")
     all_entities = {s["entity_id"] for s in states}
@@ -78,7 +81,7 @@ async def build_map() -> dict[str, Any]:
     now_utc   = datetime.now(timezone.utc)
     state_map = {s["entity_id"]: s for s in states}
 
-    # Pre-compute offline members for every group.*
+    # offline members for every group.*
     offline_by_group: dict[str, List[str]] = {}
     for st in states:
         if st["entity_id"].startswith("group."):
@@ -94,10 +97,30 @@ async def build_map() -> dict[str, Any]:
 
     for auto in automations:
         auto_id  = auto["entity_id"]
-        config   = await ha_get(f"/services/automation/get_config?entity_id={auto_id}")
+        num_id   = auto["attributes"].get("id")  # numeric id for UI automations
+
+        # ─── fetch full config ────────────────────────────────────────────────
+        try:
+            if num_id:
+                config = await ha_get(f"/config/automation/config/{num_id}")
+            else:  # YAML automation – fall back to attributes
+                config = {
+                    "trigger":   auto["attributes"].get("trigger", []),
+                    "condition": auto["attributes"].get("condition", []),
+                    "action":    auto["attributes"].get("action", []),
+                }
+        except Exception as exc:
+            _LOGGER.warning("Cannot fetch config for %s: %s", auto_id, exc)
+            config = {
+                "trigger":   auto["attributes"].get("trigger", []),
+                "condition": auto["attributes"].get("condition", []),
+                "action":    auto["attributes"].get("action", []),
+            }
+        # ───────────────────────────────────────────────────────────────────────
+
         entities = collect_entities(config)
 
-        # ---------- unknown / broken triggers ---------------------------------
+        # unknown / broken triggers
         unknown: list[str] = []
         for trig in config.get("trigger", []):
             if isinstance(trig, dict):
@@ -107,22 +130,19 @@ async def build_map() -> dict[str, Any]:
                 for eid in ids:
                     if eid not in all_entities:
                         unknown.append(eid)
-        # ----------------------------------------------------------------------
 
-        # ---------- stale calculation -----------------------------------------
+        # stale-automation calculation
         last = auto["attributes"].get("last_triggered")
         stale_days = None
         if last:
             delta      = now_utc - datetime.fromisoformat(last)
             stale_days = delta.days
-        # ----------------------------------------------------------------------
 
-        # ---------- offline members in referenced groups ----------------------
+        # offline members of referenced groups
         offline_members: list[str] = []
         for e in entities:
             if e.startswith("group.") and e in offline_by_group:
                 offline_members.extend(offline_by_group[e])
-        # ----------------------------------------------------------------------
 
         dep_map[auto_id] = {
             "friendly_name": auto["attributes"].get("friendly_name", auto_id),
