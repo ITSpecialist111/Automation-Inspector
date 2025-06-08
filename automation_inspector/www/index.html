@@ -71,7 +71,11 @@
     .dark-mode tr:nth-child(even) {
       background: #2a2a2a !important;
     }
-    /* we deliberately do NOT override td here, so inline styles with !important will show */
+    /* NEW – ensure cell text is visible in dark mode */
+    .dark-mode th,
+    .dark-mode td {
+      color: #fff !important;
+    }
 
     /* Other styling */
     h1 { margin: .2rem 0 1rem 0 }
@@ -84,6 +88,7 @@
     #controls { margin-bottom: 1em; }
     #controls select,
     #controls input { margin-left: .3em; }
+    #refreshBtn { cursor: pointer; }
   </style>
 </head>
 <body>
@@ -96,6 +101,7 @@
   <input type="checkbox" id="errOnly"> show errors only
 </label>
 <button id="toggleDark">Toggle Dark Mode</button>
+<button id="refreshBtn" title="Rebuild dependency map now">🔄 Refresh now</button>
 
 <div id="controls">
   <label>
@@ -130,6 +136,7 @@
 
 <script>
   let DATA = {};
+  let LAST_FETCH = 0; // ms-since-epoch when we last fetched
 
   // Detect Ingress vs direct
   const isIngress = window.location.pathname.includes('/api/hassio_ingress');
@@ -137,9 +144,22 @@
     ? ''
     : `${location.protocol}//${location.hostname}:8123`;
 
-  async function fetchData(){
-    const resp = await fetch('dependency_map.json');
+  async function fetchData(force=false){
+    const url = `dependency_map.json${force ? '?force=1' : ''}`;
+    const resp = await fetch(url, {cache: 'no-store'});
     DATA = await resp.json();
+    LAST_FETCH = Date.now();
+  }
+
+  function timeAgo(ts){
+    const seconds = Math.floor((Date.now()-ts)/1000);
+    if(seconds < 60) return `${seconds}s ago`;
+    const minutes = Math.floor(seconds/60);
+    if(minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes/60);
+    if(hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours/24);
+    return `${days}d ago`;
   }
 
   function render(){
@@ -225,15 +245,16 @@
     });
 
     const autoTotal = Object.keys(DATA.automations || DATA).length;
+    const refreshedText = LAST_FETCH ? ` · refreshed ${timeAgo(LAST_FETCH)}` : "";
     document.getElementById("banner").textContent =
-      `${autoTotal} automations · ${entCount} entities — `
-      + (errCount
-          ? `${errCount} automations with issues, ${badEnts} bad entities`
-          : `all OK`);
+      `${autoTotal} automations · ${entCount} entities — ` +
+      (errCount
+        ? `${errCount} automations with issues, ${badEnts} bad entities`
+        : `all OK`) + refreshedText;
   }
 
-  async function load(){
-    await fetchData();
+  async function load(force=false){
+    await fetchData(force);
     render();
   }
 
@@ -241,6 +262,7 @@
   document.getElementById("errOnly").addEventListener("change", render);
   document.getElementById("runFilter").addEventListener("change", render);
   document.getElementById("searchBtn").addEventListener("click", render);
+  document.getElementById("refreshBtn").addEventListener("click", () => load(true));
   document.getElementById("searchInput").addEventListener("keyup", e => {
     if (e.key === "Enter") render();
   });
@@ -254,6 +276,9 @@
   if (localStorage.getItem('dark-mode') === 'true') {
     document.documentElement.classList.add('dark-mode');
   }
+
+  // Periodically update the "refreshed X ago" text every 30 s so it stays current
+  setInterval(render, 30000);
 
   load();
 </script>
