@@ -1,108 +1,99 @@
-# app/main.py
-"""
-Automation Inspector – FastAPI back-end
-
-• Builds dependency map once at start-up (“warm-up”)
-• Serves subsequent requests from an in-memory cache
-• Background task refreshes the cache every CACHE_TTL seconds
-• ?force=1 on /dependency_map.json triggers an immediate rebuild
-• Root path (/) and /index.html now return the front-end file, so
-  the add-on works via direct IP:PORT as well as Ingress.
-"""
-
 from __future__ import annotations
-
-import asyncio
-import json
-import logging
-import os
-import time
+import asyncio, json, logging, os, time
 from pathlib import Path
 from typing import Optional
-
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
-
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from app.dependency_map import build_map
 
 LOG = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-# ---------------------------------------------------------------- cache settings
-CACHE_TTL = int(os.getenv("AI_CACHE_TTL", 300))           # seconds between refreshes
-_CACHE_JSON: Optional[bytes] = None                       # gzip handled by proxy
-_CACHE_TS: float = 0.0                                    # unix-epoch of last build
+CACHE_TTL = int(os.getenv("AI_CACHE_TTL", 300))
+_CACHE_JSON: Optional[bytes] = None
+_CACHE_TS: float = 0.0
 _CACHE_LOCK = asyncio.Lock()
 
-# Where the front-end lives
-BASE_DIR = Path(__file__).parent           # /app/app
-FRONTEND = BASE_DIR / "index.html"         # keep index.html beside main.py
+# ─── locate index.html ───────────────────────────────────────────────────
+BASE_DIR = Path(__file__).parent          # /app/app
+CANDIDATES = [
+    BASE_DIR.parent / "www" / "index.html",   # /app/www/index.html  ← your layout
+    BASE_DIR / "www" / "index.html",
+    BASE_DIR / "index.html",
+    BASE_DIR / "ui" / "index.html",
+    BASE_DIR / "static" / "index.html",
+    BASE_DIR.parent / "index.html",
+]
+for path in CANDIDATES:
+    if path.is_file():
+        FRONTEND = path
+        FRONTEND_DIR = path.parent
+        break
+else:
+    FRONTEND = None
+    FRONTEND_DIR = None
+LOG.info("Front-end: %s", FRONTEND or "EMBEDDED fallback")
 
-# ---------------------------------------------------------------- FastAPI
+INLINE_HTML = """
+<!doctype html><html><head><meta charset=utf-8>
+<title>Automation Inspector – missing index.html</title></head>
+<body style="font-family:sans-serif;margin:2rem">
+<h1>Automation Inspector</h1>
+<p style="color:#c00">index.html not found in the container.</p>
+<p>Place it at <code>www/index.html</code> (root of the add-on image).</p>
+</body></html>
+"""
+
+# ─── FastAPI setup ───────────────────────────────────────────────────────
 app = FastAPI(title="Automation Inspector", docs_url=None, redoc_url=None)
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
+if FRONTEND_DIR:
+    app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
-# ---------------------------------------------------------------- helpers
+# ─── helpers ─────────────────────────────────────────────────────────────
 async def _rebuild_cache() -> None:
-    """Rebuild the dependency map and store as UTF-8 JSON bytes."""
-    global _CACHE_JSON, _CACHE_TS                                       # noqa: PLW0603
+    global _CACHE_JSON, _CACHE_TS            # noqa: PLW0603
     LOG.info("Rebuilding dependency_map cache …")
     blob = await build_map()
     _CACHE_JSON = json.dumps(blob, separators=(",", ":")).encode()
     _CACHE_TS = time.time()
-    LOG.info("✅ cache rebuilt: %d bytes, %s automations",
+    LOG.info("✅ cache rebuilt: %d bytes · %s automations",
              len(_CACHE_JSON), len(blob["automations"]))
 
 async def _refresh_loop() -> None:
-    """Background task that keeps the cache warm."""
     while True:
-        try:
-            await _rebuild_cache()
-        except Exception as exc:                                        # noqa: BLE001
-            LOG.exception("Background refresh failed: %s", exc)
+        try: await _rebuild_cache()
+        except Exception as exc: LOG.exception("Background refresh failed: %s", exc)
         await asyncio.sleep(CACHE_TTL)
 
-# ---------------------------------------------------------------- start-up
 @app.on_event("startup")
 async def _startup() -> None:
-    await _rebuild_cache()                       # warm-up build
+    await _rebuild_cache()
     asyncio.create_task(_refresh_loop(), name="ai_refresh_loop")
 
-# ---------------------------------------------------------------- static front-end
+# ─── front-end routes ────────────────────────────────────────────────────
 @app.get("/", response_class=HTMLResponse)
 @app.get("/index.html", response_class=HTMLResponse)
-async def _index() -> FileResponse:             # noqa: D401
-    """Return the front-end HTML file."""
-    return FileResponse(FRONTEND)
+async def _index() -> HTMLResponse:
+    if FRONTEND:
+        return HTMLResponse(FRONTEND.read_text("utf-8"))
+    return HTMLResponse(INLINE_HTML, status_code=200)
 
-# ---------------------------------------------------------------- JSON endpoint
+# ─── JSON endpoint ───────────────────────────────────────────────────────
 @app.get("/dependency_map.json")
 async def dependency_map(force: int = 0) -> Response:
-    """
-    Return dependency-map JSON.
-
-    • cached path – fast
-    • `?force=1`   – synchronous rebuild (bypasses cache)
-    """
-    global _CACHE_JSON                                                # noqa: PLW0603
-
-    # manual rebuild requested
+    global _CACHE_JSON                       # noqa: PLW0603
     if force:
         async with _CACHE_LOCK:
             await _rebuild_cache()
-
-    # stale-cache safety net
     if _CACHE_JSON is None or time.time() - _CACHE_TS > CACHE_TTL * 1.5:
         async with _CACHE_LOCK:
             if _CACHE_JSON is None or time.time() - _CACHE_TS > CACHE_TTL * 1.5:
                 await _rebuild_cache()
-
     return Response(
         content=_CACHE_JSON,
         media_type="application/json",
