@@ -1,34 +1,28 @@
-import asyncio
-from fastapi import FastAPI, Response
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
-from .dependency_map import build_map
-from .renderer import lovelace_from_map
-import os
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI()
-CACHE = {}
-CACHE_TTL = 30  # seconds
+# Import the new async builder (alias left in dependency_map for compatibility)
+from app.dependency_map import build_map
 
-async def get_map():
-    now = asyncio.get_event_loop().time()
-    if CACHE and now - CACHE["ts"] < CACHE_TTL:
-        return CACHE["data"]
-    data = await build_map()
-    CACHE.update({"data": data, "ts": now})
-    return data
+app = FastAPI(
+    title="Automation Inspector",
+    docs_url=None,
+    redoc_url=None,
+)
 
-# ----------------- API endpoints -----------------
+# If your add-on already has other middleware or routes, keep them;
+# nothing below interferes with existing code.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 @app.get("/dependency_map.json")
 async def dependency_map():
-    return await build_dependency_map()
-
-@app.get("/dashboard.yaml")
-async def dashboard_yaml():
-    data = await get_map()
-    yaml_str = lovelace_from_map(data)
-    return PlainTextResponse(yaml_str, media_type="text/yaml")
-
-# ----------------- Front-end assets ---------------
-@app.get("/")
-async def root():
-    return FileResponse(os.path.join(os.path.dirname(__file__), "..", "www", "index.html"))
+    """
+    Return the JSON consumed by the front-end table.
+    build_map() is fully async and already handles all caching/parallelism.
+    """
+    return await build_map()
