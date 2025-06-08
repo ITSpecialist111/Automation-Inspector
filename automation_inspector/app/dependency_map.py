@@ -1,33 +1,16 @@
-"""
-dependency_map.py – builds the JSON served at /dependency_map.json
-
-Adds for v0.3.1:
-  • 'enabled'   – True/False automation state
-  • 'config_id' – numeric id used by /config/automation/edit/<id> (Trace button)
-
-v0.3.4 change:
-  • suppress false-positive “entities” (services, non-existent IDs)
-
-v0.3.9 change:
-  • add 'last_triggered' – timestamp of when each automation last ran
-  • add orphan detection for input_* helpers
-
-v0.4.0 change (performance):
-  • fetch all /api/config/automation/config/… YAMLs concurrently
-    with asyncio.gather → dramatic first-load speed-up
-"""
-
 from __future__ import annotations
 import asyncio
+import logging
 import os
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import httpx
 import yaml
 
-HA_URL  = "http://supervisor/core"
-TOKEN   = os.getenv("SUPERVISOR_TOKEN")
+LOG = logging.getLogger(__name__)
+HA_URL = "http://supervisor/core"
+TOKEN  = os.getenv("SUPERVISOR_TOKEN")
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
 ENTITY_RE = re.compile(
@@ -38,21 +21,26 @@ ENTITY_RE = re.compile(
 # ---------------------------------------------------------------- helpers
 async def ha_get(path: str, *, json: bool = False) -> Any | None:
     """
-    Thin async wrapper around a GET to Home-Assistant’s HTTP API.
-
-    Returns   – parsed JSON if json=True, otherwise raw text.
-    On 403/404 – returns None (HA does that for disabled automations).
+    Async GET to the HA API.
+    • Returns parsed JSON (json=True) or text.
+    • 403, 404 or any 5xx ⇒ None (treated as “missing/disabled”).
     """
     async with httpx.AsyncClient() as cli:
-        r = await cli.get(f"{HA_URL}{path}", headers=HEADERS, timeout=30)
-        if r.status_code in (403, 404):
+        try:
+            resp = await cli.get(f"{HA_URL}{path}", headers=HEADERS, timeout=30)
+        except httpx.RequestError as exc:
+            LOG.warning("HTTP request failed %s: %s", path, exc)
             return None
-        r.raise_for_status()
-        return r.json() if json else r.text
+
+        if resp.status_code in (403, 404) or resp.status_code >= 500:
+            return None
+
+        resp.raise_for_status()
+        return resp.json() if json else resp.text
 
 
 def collect_entities(obj: Any) -> List[str]:
-    """Recursively find all entity IDs in a dict/list/str."""
+    """Recursively find all entity IDs in nested data structures."""
     found: set[str] = set()
     if obj is None:
         return []
@@ -69,82 +57,100 @@ def collect_entities(obj: Any) -> List[str]:
 
 async def find_orphaned_helpers(
     state_map: Dict[str, Any],
-    dep_map: Dict[str, dict]
+    dep_map: Dict[str, dict],
 ) -> List[str]:
-    """
-    Return a sorted list of all input_* helpers that are not referenced
-    by any automation in dep_map.
-    """
-    all_helpers = {eid for eid in state_map if eid.startswith("input_")}
+    """Return all input_* helpers not referenced by any automation."""
+    helpers    = {eid for eid in state_map if eid.startswith("input_")}
     referenced = {
         ent["id"]
         for info in dep_map.values()
         for ent in info.get("entities", [])
     }
-    return sorted(all_helpers - referenced)
+    return sorted(helpers - referenced)
 
 # ---------------------------------------------------------------- main
+async def process_automation(st: Dict[str, Any], state_map: Dict[str, Any]) -> Tuple[str, dict] | None:
+    """Return (entity_id, info) or None if irrecoverable error occurred."""
+    ent_id    = st["entity_id"]
+    nice      = st["attributes"].get("friendly_name", ent_id)
+    enabled   = (st["state"] == "on")
+    config_id = st["attributes"].get("id")
+    last      = state_map.get(ent_id, {}).get("attributes", {}).get("last_triggered")
+
+    # ---- fetch YAML (may legitimately be None)
+    yaml_txt: str | None = None
+    try:
+        if config_id:
+            yaml_txt = await ha_get(f"/api/config/automation/config/{config_id}")
+        if yaml_txt is None:
+            slug     = ent_id.split(".", 1)[1]
+            yaml_txt = await ha_get(f"/api/config/automation/config/{slug}")
+    except Exception as exc:  # noqa: BLE001
+        LOG.warning("Failed to fetch YAML for %s: %s", ent_id, exc)
+        yaml_txt = None
+
+    # ---- extract entities
+    try:
+        ids = collect_entities(
+            yaml.safe_load(yaml_txt) if yaml_txt else st["attributes"]
+        )
+    except yaml.YAMLError as exc:
+        LOG.warning("YAML parse error in %s: %s", ent_id, exc)
+        ids = []
+
+    rich: List[dict] = []
+    seen = set()
+    for eid in sorted(ids):
+        if eid in seen or eid not in state_map:
+            continue
+        seen.add(eid)
+        row   = state_map[eid]
+        state = row["state"]
+        ok    = state not in ("unavailable", "unknown")
+        rich.append({"id": eid, "state": state, "ok": ok})
+
+    return ent_id, {
+        "friendly_name":  nice,
+        "enabled":        enabled,
+        "config_id":      config_id,
+        "last_triggered": last,
+        "entities":       rich,
+    }
+
+
 async def build_map() -> Dict[str, Any]:
-    """Return the dependency map plus orphan list used by /dependency_map.json."""
-    # ───────────────────────── states ─────────────────────────
+    """Build dependency map + orphan list for /dependency_map.json."""
     states_raw = await ha_get("/api/states", json=True) or []
     state_map  = {row["entity_id"]: row for row in states_raw}
     autos      = [s for s in states_raw if s["entity_id"].startswith("automation.")]
     dep: Dict[str, dict] = {}
 
-    # ─────────────────── per-automation worker ───────────────────
-    async def process_automation(st: Dict[str, Any]) -> tuple[str, dict]:
-        ent_id    = st["entity_id"]
-        nice      = st["attributes"].get("friendly_name", ent_id)
-        enabled   = (st["state"] == "on")
-        config_id = st["attributes"].get("id")
-        last      = state_map.get(ent_id, {}).get("attributes", {}).get("last_triggered")
+    # ---- fan-out with exception capture
+    tasks = [
+        process_automation(st, state_map)
+        for st in autos
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # ---------- YAML fetch (may be None for disabled automations)
-        yaml_txt: str | None = None
-        if config_id:
-            yaml_txt = await ha_get(f"/api/config/automation/config/{config_id}")
-        if yaml_txt is None:       # fall-back to slug (covers blueprints / old HA)
-            slug     = ent_id.split(".", 1)[1]
-            yaml_txt = await ha_get(f"/api/config/automation/config/{slug}")
+    skipped = 0
+    for res in results:
+        if isinstance(res, Exception):
+            skipped += 1
+            LOG.warning("Skipped automation due to error: %s", res)
+            continue
+        if res is None:
+            skipped += 1
+            continue
+        ent_id, info = res
+        dep[ent_id] = info
 
-        # ---------- entity extraction
-        try:
-            ids = collect_entities(
-                yaml.safe_load(yaml_txt) if yaml_txt else st["attributes"]
-            )
-        except yaml.YAMLError:
-            ids = []
-
-        rich: List[dict] = []
-        seen = set()
-        for eid in sorted(ids):
-            if eid in seen or eid not in state_map:
-                continue
-            seen.add(eid)
-            row   = state_map[eid]
-            state = row["state"]
-            ok    = state not in ("unavailable", "unknown")
-            rich.append({"id": eid, "state": state, "ok": ok})
-
-        return ent_id, {
-            "friendly_name":  nice,
-            "enabled":        enabled,
-            "config_id":      config_id,
-            "last_triggered": last,
-            "entities":       rich,
-        }
-
-    # ───────────────────────── fan-out ─────────────────────────
-    results = await asyncio.gather(*[process_automation(st) for st in autos])
-    dep.update(dict(results))
-
-    # ──────────────────────── orphans ─────────────────────────
     orphans = await find_orphaned_helpers(state_map, dep)
-    print(f"▶ built map with {len(dep)} automations, {len(orphans)} orphaned helpers")
-
+    LOG.info(
+        "▶ built map with %s automations, %s orphaned helpers (skipped %s)",
+        len(dep), len(orphans), skipped,
+    )
     return {"automations": dep, "orphans": orphans}
 
-# -----------------------------------------------------------------------
-# backward-compatibility alias (old code imported build_dependency_map)
+
+# compatibility for legacy imports
 build_dependency_map = build_map
