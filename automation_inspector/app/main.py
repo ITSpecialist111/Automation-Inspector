@@ -19,8 +19,8 @@ async def get_map():
 
 # ----------------- API endpoints -----------------
 @app.get("/dependency_map.json")
-async def dep_map():
-    return JSONResponse(await get_map())
+async def dependency_map():
+    return await build_dependency_map()
 
 @app.get("/dashboard.yaml")
 async def dashboard_yaml():

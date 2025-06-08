@@ -1,8 +1,8 @@
 {
   "name": "Automation Inspector",
-  "version": "0.4.0",         
+  "version": "0.4.1",         
   "slug": "automation_inspector",
-  "description": "Shows each automation with the sensors it depends on",
+  "description": "Shows each automation with the sensors it depends on. Easy debugging of automations.",
   "url": "https://github.com/ITSpecialist111/Automation-Inspector",
   "arch": ["aarch64", "amd64", "armv7"],
   "startup": "application",
