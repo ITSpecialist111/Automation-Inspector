@@ -11,7 +11,7 @@ from app.dependency_map import build_map
 LOG = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-CACHE_TTL = int(os.getenv("AI_CACHE_TTL", 300))
+CACHE_TTL = int(os.getenv("AI_CACHE_TTL", 86400))  # 24 hours
 _CACHE_JSON: Optional[bytes] = None
 _CACHE_TS: float = 0.0
 _CACHE_LOCK = asyncio.Lock()

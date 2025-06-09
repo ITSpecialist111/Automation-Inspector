@@ -1,6 +1,6 @@
 {
   "name": "Automation Inspector",
-  "version": "0.4.2",         
+  "version": "0.4.3",         
   "slug": "automation_inspector",
   "description": "Shows each automation with the sensors it depends on. Easy debugging of automations.",
   "url": "https://github.com/ITSpecialist111/Automation-Inspector",
