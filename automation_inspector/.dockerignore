@@ -1,0 +1,9 @@
+# Evita di copiare la build statica già presente
+www/
+# Evita di copiare le dipendenze locali di node
+automation-inspector-frontend/node_modules/
+# Altri file temporanei/comuni
+*.log
+npm-debug.log
+.DS_Store
+.env
