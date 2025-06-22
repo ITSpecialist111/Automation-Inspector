@@ -49,10 +49,18 @@ INLINE_HTML = """
 # ─── FastAPI setup ───────────────────────────────────────────────────────
 app = FastAPI(title="Automation Inspector", docs_url=None, redoc_url=None)
 app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
-)
-if FRONTEND_DIR:
-    app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+
+WWW_DIR = BASE_DIR.parent / "www"
+if WWW_DIR.is_dir():
+    if (WWW_DIR / "_next").is_dir():
+        app.mount("/_next", StaticFiles(directory=WWW_DIR / "_next"), name="next-static")
+    if (WWW_DIR / "static").is_dir():
+        app.mount("/static", StaticFiles(directory=WWW_DIR / "static"), name="static")
+    if (WWW_DIR / "media").is_dir():
+        app.mount("/media", StaticFiles(directory=WWW_DIR / "media"), name="media")
+    app.mount("/", StaticFiles(directory=WWW_DIR, html=True), name="frontend")
 
 # ─── helpers ─────────────────────────────────────────────────────────────
 async def _rebuild_cache() -> None:
@@ -66,8 +74,10 @@ async def _rebuild_cache() -> None:
 
 async def _refresh_loop() -> None:
     while True:
-        try: await _rebuild_cache()
-        except Exception as exc: LOG.exception("Background refresh failed: %s", exc)
+        try:
+            await _rebuild_cache()
+        except Exception as exc:
+            LOG.exception("Background refresh failed: %s", exc)
         await asyncio.sleep(CACHE_TTL)
 
 @app.on_event("startup")
@@ -76,6 +86,7 @@ async def _startup() -> None:
     asyncio.create_task(_refresh_loop(), name="ai_refresh_loop")
 
 # ─── front-end routes ────────────────────────────────────────────────────
+
 @app.get("/", response_class=HTMLResponse)
 @app.get("/index.html", response_class=HTMLResponse)
 async def _index() -> HTMLResponse:

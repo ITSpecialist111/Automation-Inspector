@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Automation Inspector</title>
+    <script>
+      // Prevent flash of unstyled content by setting theme before page loads
+      (function () {
+        try {
+          const theme =
+            localStorage.getItem("automation-inspector-theme") || "system";
+          const systemTheme = window.matchMedia("(prefers-color-scheme: dark)")
+            .matches
+            ? "dark"
+            : "light";
+          const resolvedTheme = theme === "system" ? systemTheme : theme;
+
+          if (resolvedTheme === "dark") {
+            document.documentElement.classList.add("dark");
+          } else {
+            document.documentElement.classList.add("light");
+          }
+
+          // Set CSS custom property for smooth transitions
+          document.documentElement.style.setProperty(
+            "--theme-transition",
+            "colors 300ms ease-in-out",
+          );
+        } catch (e) {
+          // Fallback to light theme if there's an error
+          document.documentElement.classList.add("light");
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

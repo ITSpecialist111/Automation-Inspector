@@ -1,0 +1,1 @@
+This is the frontend for the Automation Inspector project.

@@ -1,0 +1,10 @@
+services:
+  automation_inspector:
+    build:
+      context: .
+    image: automation_inspector:dev
+    ports:
+      - "1234:1234"
+    environment:
+      SUPERVISOR_TOKEN: "dummy"
+      SUPERVISOR_ENDPOINT: "http://host.docker.internal:8123"
