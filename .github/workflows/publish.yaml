@@ -1,6 +1,9 @@
 name: Publish app image
 
 on:
+  push:
+    tags:
+      - "v*"
   release:
     types:
       - published
@@ -36,9 +39,10 @@ jobs:
         env:
           INPUT_VERSION: ${{ inputs.version }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
+          PUSH_TAG: ${{ github.ref_name }}
           IS_PRERELEASE: ${{ github.event.release.prerelease }}
         run: |
-          requested="${INPUT_VERSION:-${RELEASE_TAG}}"
+          requested="${INPUT_VERSION:-${RELEASE_TAG:-${PUSH_TAG}}}"
           version="${requested#v}"
           configured="$(awk '$1 == "version:" { print $2; exit }' automation_inspector/config.yaml)"
           if [[ -z "${version}" || "${version}" != "${configured}" ]]; then
@@ -112,3 +116,28 @@ jobs:
           image-name: ${{ env.IMAGE_NAME }}
           image-tags: ${{ needs.init.outputs.tags }}
           registry-prefix: ${{ env.REGISTRY_PREFIX }}
+
+  release:
+    name: Publish GitHub release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - init
+      - manifest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ needs.init.outputs.version }}
+        run: >-
+          gh release create "${RELEASE_TAG}"
+          --verify-tag
+          --title "Automation Inspector ${RELEASE_VERSION}"
+          --notes-file automation_inspector/CHANGELOG.md
+          --latest
