@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.1 — 2026-07-11
+
+### Fixed
+
+- Treat Jinja expressions in entity, device, area, floor, and label targets as runtime-resolved values instead of sending them to Home Assistant's static target API.
+- Prevent templated target expressions such as `{{ sonos_speaker }}` from appearing as missing entity dependencies.
+- Deduplicate repeated source warnings while preserving their original order.
+
+### Changed
+
+- Show dynamic targets as informational **Runtime** chips in automation details.
+- Use version-tag pushes as the single release/image publication trigger to avoid duplicate builds.
+
 ## 1.0.0 — 2026-07-11
 
 ### Breaking

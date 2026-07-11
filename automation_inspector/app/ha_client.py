@@ -332,7 +332,8 @@ class HomeAssistantClient:
             targets: dict[str, dict[str, list[str]]] = {}
             for config in configs_for_analysis.values():
                 for use in iter_target_uses(config):
-                    targets.setdefault(use.key, use.target)
+                    if use.target:
+                        targets.setdefault(use.key, use.target)
 
             detail_requests: dict[str, dict[str, Any]] = {}
             for key, target in targets.items():
@@ -420,5 +421,5 @@ class HomeAssistantClient:
                 validations=validations,
                 traces=traces,
                 trace_details=trace_details,
-                warnings=warnings,
+                warnings=list(dict.fromkeys(warnings)),
             )

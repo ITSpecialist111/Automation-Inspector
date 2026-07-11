@@ -22,9 +22,16 @@ async def test_home_assistant_client_fetches_complete_websocket_snapshot() -> No
                 "target": {"area_id": "kitchen"},
             }
         ],
-        "actions": [{"action": "light.turn_on", "target": {"area_id": "kitchen"}}],
+        "actions": [
+            {"action": "light.turn_on", "target": {"area_id": "kitchen"}},
+            {
+                "action": "media_player.play_media",
+                "target": {"entity_id": "{{ sonos_speaker }}"},
+            },
+        ],
     }
     received_types: list[str] = []
+    resolved_targets: list[dict[str, object]] = []
 
     async def handler(websocket: ServerConnection) -> None:
         await websocket.send(json.dumps({"type": "auth_required"}))
@@ -146,6 +153,7 @@ async def test_home_assistant_client_fetches_complete_websocket_snapshot() -> No
                 elif request_type == "unsubscribe_events":
                     result = None
                 elif request_type == "extract_from_target":
+                    resolved_targets.append(request["target"])
                     result = {
                         "referenced_entities": ["sensor.kitchen_battery"],
                         "referenced_devices": ["battery-device"],
@@ -201,6 +209,10 @@ async def test_home_assistant_client_fetches_complete_websocket_snapshot() -> No
     ]
     assert "unsubscribe_events" in received_types
     assert "trace/get" in received_types
+    assert resolved_targets == [
+        {"area_id": ["kitchen"]},
+        {"area_id": ["kitchen"]},
+    ]
 
 
 @pytest.mark.anyio

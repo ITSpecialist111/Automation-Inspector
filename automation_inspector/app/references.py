@@ -109,12 +109,32 @@ def target_key(target: dict[str, list[str]]) -> str:
     return json.dumps(target, sort_keys=True, separators=(",", ":"))
 
 
+def _is_template(value: str) -> bool:
+    return any(marker in value for marker in ("{{", "{%", "{#"))
+
+
+def _partition_target(
+    target: dict[str, list[str]],
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    static: dict[str, list[str]] = {}
+    dynamic: dict[str, list[str]] = {}
+    for key, values in target.items():
+        static_values = [value for value in values if not _is_template(value)]
+        dynamic_values = [value for value in values if _is_template(value)]
+        if static_values:
+            static[key] = static_values
+        if dynamic_values:
+            dynamic[key] = dynamic_values
+    return static, dynamic
+
+
 @dataclass(frozen=True, slots=True)
 class TargetUse:
     path: str
     kind: str
     component: str | None
     target: dict[str, list[str]]
+    dynamic_target: dict[str, list[str]]
 
     @property
     def key(self) -> str:
@@ -133,8 +153,9 @@ def iter_target_uses(config: dict[str, Any]) -> list[TargetUse]:
         if not isinstance(value, dict):
             return
 
-        target = normalize_target(value.get("target"))
-        if target:
+        normalized_target = normalize_target(value.get("target"))
+        target, dynamic_target = _partition_target(normalized_target)
+        if target or dynamic_target:
             if isinstance(value.get("trigger", value.get("platform")), str):
                 kind = "trigger"
                 component = str(value.get("trigger", value.get("platform")))
@@ -147,7 +168,7 @@ def iter_target_uses(config: dict[str, Any]) -> list[TargetUse]:
             else:
                 kind = "target"
                 component = None
-            uses.append(TargetUse(f"{path}.target", kind, component, target))
+            uses.append(TargetUse(f"{path}.target", kind, component, target, dynamic_target))
 
         for key, child in value.items():
             if key != "target":

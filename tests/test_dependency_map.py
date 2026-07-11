@@ -255,3 +255,37 @@ def test_excluding_disabled_automation_does_not_report_its_file_as_unloaded() ->
 
     assert report["automations"] == {}
     assert report["summary"]["unloaded"] == 0
+
+
+def test_runtime_template_target_is_informational_not_a_missing_dependency() -> None:
+    config = {
+        "id": "dynamic-id",
+        "alias": "Dynamic speaker",
+        "triggers": [],
+        "actions": [
+            {
+                "action": "media_player.play_media",
+                "target": {"entity_id": "{{ sonos_speaker }}"},
+            }
+        ],
+    }
+    snapshot = SourceSnapshot(
+        states=[
+            {
+                "entity_id": "automation.dynamic_speaker",
+                "state": "on",
+                "attributes": {"id": "dynamic-id"},
+            }
+        ],
+        home_assistant_config={"version": "2026.7.2"},
+        automation_configs={"automation.dynamic_speaker": config},
+    )
+
+    report = build_inspection(snapshot, Settings())
+    automation = report["automations"]["automation.dynamic_speaker"]
+
+    assert automation["entities"] == []
+    assert automation["issue_count"] == 0
+    assert automation["targets"][0]["runtime_resolved"] is True
+    assert automation["targets"][0]["dynamic_target"] == {"entity_id": ["{{ sonos_speaker }}"]}
+    assert report["summary"]["missing_entities"] == 0

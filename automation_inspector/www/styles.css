@@ -908,6 +908,12 @@ input[type="search"]::placeholder {
   color: var(--cp-danger);
 }
 
+.target-chip.dynamic {
+  border-color: color-mix(in srgb, var(--cp-link) 42%, var(--cp-border));
+  background: color-mix(in srgb, var(--cp-link) 10%, var(--cp-surface));
+  color: var(--cp-link);
+}
+
 .trace-line {
   align-items: flex-start;
   gap: 0.4rem;

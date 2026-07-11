@@ -12,6 +12,7 @@ It resolves modern Home Assistant targets, checks dependency health, validates a
 - **Complete automation config** — reads each loaded automation through the canonical `automation/config` WebSocket API instead of relying on state attributes.
 - **Current target model** — understands entity, device, area, floor, and label targets.
 - **Purpose-aware resolution** — filters resolved entities using the trigger, condition, or action target metadata Home Assistant itself publishes.
+- **Runtime-aware templates** — preserves templated target values as runtime-resolved metadata without reporting false missing entities.
 - **Missing references remain visible** — reports missing, disabled, unavailable, and unknown entities instead of silently discarding them.
 - **Unloaded automation detection** — safely scans read-only `automations.yaml` so invalid UI-managed automations do not disappear from the report.
 - **Native validation** — sends triggers, conditions, and actions through Home Assistant's `validate_config` command.
@@ -175,7 +176,7 @@ Do not expose that development server to an untrusted network. It does not add a
 ```bash
 docker build \
   --build-arg BUILD_ARCH=amd64 \
-  --build-arg BUILD_VERSION=1.0.0 \
+  --build-arg BUILD_VERSION=1.0.1 \
   -t automation-inspector:dev \
   automation_inspector
 ```

@@ -295,6 +295,7 @@ function automationSearchText(key, info) {
       ...(target.area_ids || []),
       ...(target.floor_ids || []),
       ...(target.label_ids || []),
+      ...Object.values(target.dynamic_target || {}).flat(),
     );
   });
   return parts.filter(Boolean).join(" ").toLocaleLowerCase();
@@ -485,11 +486,11 @@ function findingsPanel(info) {
   return panel;
 }
 
-function appendTargetChips(container, label, values, missing = false) {
+function appendTargetChips(container, label, values, tone = "") {
   (values || []).forEach((value) => {
     container.append(
       create("span", {
-        className: `target-chip${missing ? " missing" : ""}`,
+        className: `target-chip${tone ? ` ${tone}` : ""}`,
         text: `${label}: ${value}`,
       }),
     );
@@ -499,7 +500,7 @@ function appendTargetChips(container, label, values, missing = false) {
 function targetsPanel(info) {
   const targets = info.targets || [];
   if (!targets.length) return null;
-  const panel = detailPanel("Resolved targets");
+  const panel = detailPanel("Targets");
   const list = create("ul", { className: "target-list" });
   targets.forEach((target) => {
     const row = create("li", { className: "target-row" });
@@ -515,10 +516,16 @@ function targetsPanel(info) {
     appendTargetChips(chips, "Area", target.area_ids);
     appendTargetChips(chips, "Floor", target.floor_ids);
     appendTargetChips(chips, "Label", target.label_ids);
-    appendTargetChips(chips, "Missing device", target.missing_devices, true);
-    appendTargetChips(chips, "Missing area", target.missing_areas, true);
-    appendTargetChips(chips, "Missing floor", target.missing_floors, true);
-    appendTargetChips(chips, "Missing label", target.missing_labels, true);
+    const dynamic = target.dynamic_target || {};
+    appendTargetChips(chips, "Runtime entity", dynamic.entity_id, "dynamic");
+    appendTargetChips(chips, "Runtime device", dynamic.device_id, "dynamic");
+    appendTargetChips(chips, "Runtime area", dynamic.area_id, "dynamic");
+    appendTargetChips(chips, "Runtime floor", dynamic.floor_id, "dynamic");
+    appendTargetChips(chips, "Runtime label", dynamic.label_id, "dynamic");
+    appendTargetChips(chips, "Missing device", target.missing_devices, "missing");
+    appendTargetChips(chips, "Missing area", target.missing_areas, "missing");
+    appendTargetChips(chips, "Missing floor", target.missing_floors, "missing");
+    appendTargetChips(chips, "Missing label", target.missing_labels, "missing");
     if (!chips.childElementCount) {
       chips.append(create("span", { className: "section-note", text: "No matching entities." }));
     }

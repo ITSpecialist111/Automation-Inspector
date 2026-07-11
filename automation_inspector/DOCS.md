@@ -21,6 +21,7 @@ Restart the App after changing options.
 - **Unavailable / unknown** — Home Assistant has a state object, but its current state is unhealthy.
 - **Not loaded** — the automation exists in `automations.yaml` but has no runtime automation entity.
 - **Unresolved target** — a referenced device, area, floor, or label no longer exists.
+- **Runtime target** — a Jinja template such as `{{ sonos_speaker }}` that Home Assistant resolves only when the automation runs; this is informational, not a failure.
 - **Compatibility** — Home Assistant validation failed or the configuration uses a removed/deprecated construct.
 - **Trace failure** — the latest retained execution ended in an error or contains template errors.
 

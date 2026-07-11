@@ -48,3 +48,29 @@ def test_collects_modern_multidimensional_targets() -> None:
     assert uses[0].kind == "trigger"
     assert uses[0].component == "battery.became_low"
     assert uses[0].target["floor_id"] == ["ground"]
+
+
+def test_partitions_runtime_templates_from_static_targets() -> None:
+    config = {
+        "actions": [
+            {
+                "action": "media_player.play_media",
+                "target": {
+                    "entity_id": [
+                        "media_player.office",
+                        "{{ sonos_speaker }}",
+                        "media_player.{{ room }}",
+                    ]
+                },
+            }
+        ]
+    }
+
+    uses = iter_target_uses(config)
+    references = collect_entity_references(config, {"media_player"})
+
+    assert uses[0].target == {"entity_id": ["media_player.office"]}
+    assert uses[0].dynamic_target == {
+        "entity_id": ["media_player.{{ room }}", "{{ sonos_speaker }}"]
+    }
+    assert references == {"media_player.office": {"action_target", "explicit"}}

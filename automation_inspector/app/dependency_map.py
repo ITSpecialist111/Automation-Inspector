@@ -314,6 +314,8 @@ def _target_rows(
                     "area_ids": use.target.get("area_id", []),
                     "floor_ids": use.target.get("floor_id", []),
                     "label_ids": use.target.get("label_id", []),
+                    "dynamic_target": use.dynamic_target,
+                    "runtime_resolved": bool(use.dynamic_target),
                     "missing_devices": sorted(_as_set(resolution.get("missing_devices"))),
                     "missing_areas": sorted(_as_set(resolution.get("missing_areas"))),
                     "missing_floors": sorted(_as_set(resolution.get("missing_floors"))),

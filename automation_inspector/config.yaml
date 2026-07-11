@@ -1,5 +1,5 @@
 name: Automation Inspector
-version: 1.0.0
+version: 1.0.1
 slug: automation_inspector
 description: >-
   Audits automation dependencies, targets, compatibility, and recent failures

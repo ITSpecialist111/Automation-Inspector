@@ -4,9 +4,6 @@ on:
   push:
     tags:
       - "v*"
-  release:
-    types:
-      - published
   workflow_dispatch:
     inputs:
       version:
@@ -38,11 +35,9 @@ jobs:
         id: version
         env:
           INPUT_VERSION: ${{ inputs.version }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
           PUSH_TAG: ${{ github.ref_name }}
-          IS_PRERELEASE: ${{ github.event.release.prerelease }}
         run: |
-          requested="${INPUT_VERSION:-${RELEASE_TAG:-${PUSH_TAG}}}"
+          requested="${INPUT_VERSION:-${PUSH_TAG}}"
           version="${requested#v}"
           configured="$(awk '$1 == "version:" { print $2; exit }' automation_inspector/config.yaml)"
           if [[ -z "${version}" || "${version}" != "${configured}" ]]; then
@@ -53,7 +48,7 @@ jobs:
           {
             echo "tags<<EOF"
             echo "${version}"
-            if [[ "${IS_PRERELEASE}" != "true" ]]; then
+            if [[ "${version}" != *-* ]]; then
               echo "latest"
             fi
             echo "EOF"
