@@ -1,0 +1,16 @@
+configuration:
+  refresh_interval:
+    name: Refresh interval
+    description: Seconds between automatic background inspections (30–86400).
+  request_timeout:
+    name: Home Assistant request timeout
+    description: Seconds to wait for each Home Assistant WebSocket response (3–120).
+  include_disabled:
+    name: Include disabled automations
+    description: Analyze automations that are currently turned off as well as enabled automations.
+  inspect_traces:
+    name: Inspect recent traces
+    description: Retrieve details for recent failed automation runs and template errors.
+  scan_automations_file:
+    name: Scan automations.yaml
+    description: Read the configuration file to report automations that failed to load.

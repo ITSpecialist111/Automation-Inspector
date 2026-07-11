@@ -1,4 +1,3 @@
-name: Automation Inspector Add-ons
+name: Automation Inspector Apps
 url: https://github.com/ITSpecialist111/Automation-Inspector
-maintainer: Graham Hosking graham@hosking.wales
-homeassistant_version: "2024.2"   # optional min version
+maintainer: Graham Hosking <graham@hosking.wales>

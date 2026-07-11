@@ -1,0 +1,114 @@
+name: Publish app image
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version matching automation_inspector/config.yaml
+        required: true
+        type: string
+
+env:
+  ARCHITECTURES: '["amd64", "aarch64"]'
+  IMAGE_NAME: automation-inspector
+  REGISTRY_PREFIX: ghcr.io/itspecialist111
+
+permissions:
+  contents: read
+
+jobs:
+  init:
+    name: Initialize release
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      version: ${{ steps.version.outputs.version }}
+      tags: ${{ steps.version.outputs.tags }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate release version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          IS_PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          requested="${INPUT_VERSION:-${RELEASE_TAG}}"
+          version="${requested#v}"
+          configured="$(awk '$1 == "version:" { print $2; exit }' automation_inspector/config.yaml)"
+          if [[ -z "${version}" || "${version}" != "${configured}" ]]; then
+            echo "Release version '${version}' must match config version '${configured}'." >&2
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "tags<<EOF"
+            echo "${version}"
+            if [[ "${IS_PRERELEASE}" != "true" ]]; then
+              echo "latest"
+            fi
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Prepare architecture matrix
+        id: matrix
+        uses: home-assistant/builder/actions/prepare-multi-arch-matrix@2026.06.0
+        with:
+          architectures: ${{ env.ARCHITECTURES }}
+          image-name: ${{ env.IMAGE_NAME }}
+          registry-prefix: ${{ env.REGISTRY_PREFIX }}
+
+  build:
+    name: Build ${{ matrix.arch }} image
+    needs: init
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.init.outputs.matrix) }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Build and publish image
+        uses: home-assistant/builder/actions/build-image@2026.06.0
+        with:
+          arch: ${{ matrix.arch }}
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+          context: automation_inspector
+          image: ${{ matrix.image }}
+          image-tags: ${{ needs.init.outputs.tags }}
+          push: "true"
+          version: ${{ needs.init.outputs.version }}
+          cache-gha-scope: automation-inspector
+          labels: |
+            io.hass.type=app
+            org.opencontainers.image.title=Automation Inspector
+            org.opencontainers.image.licenses=MIT
+
+  manifest:
+    name: Publish multi-architecture manifest
+    needs:
+      - init
+      - build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      packages: write
+    steps:
+      - name: Publish and sign manifest
+        uses: home-assistant/builder/actions/publish-multi-arch-manifest@2026.06.0
+        with:
+          architectures: ${{ env.ARCHITECTURES }}
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+          image-name: ${{ env.IMAGE_NAME }}
+          image-tags: ${{ needs.init.outputs.tags }}
+          registry-prefix: ${{ env.REGISTRY_PREFIX }}

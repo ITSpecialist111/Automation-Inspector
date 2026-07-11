@@ -1,0 +1,45 @@
+name: Automation Inspector
+version: 1.0.0
+slug: automation_inspector
+description: >-
+  Audits automation dependencies, targets, compatibility, and recent failures
+  without sending Home Assistant data outside your instance.
+url: https://github.com/ITSpecialist111/Automation-Inspector
+arch:
+  - aarch64
+  - amd64
+image: ghcr.io/itspecialist111/automation-inspector
+startup: application
+boot: auto
+init: true
+stage: stable
+homeassistant: 2026.7.0
+homeassistant_api: true
+ingress: true
+ingress_port: 1234
+ingress_stream: false
+panel_icon: mdi:robot-industrial-outline
+panel_title: Automation Inspector
+panel_admin: true
+watchdog: http://[HOST]:[PORT:1234]/health
+tmpfs: true
+backup: hot
+timeout: 30
+breaking_versions:
+  - 1.0.0
+map:
+  - type: homeassistant_config
+    read_only: true
+    path: /homeassistant
+options:
+  refresh_interval: 300
+  request_timeout: 15
+  include_disabled: true
+  inspect_traces: true
+  scan_automations_file: true
+schema:
+  refresh_interval: int(30,86400)
+  request_timeout: int(3,120)
+  include_disabled: bool
+  inspect_traces: bool
+  scan_automations_file: bool

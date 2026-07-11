@@ -1,0 +1,50 @@
+from app.references import collect_entity_references, iter_target_uses
+
+
+def test_extracts_arbitrary_entity_domains_and_templates_but_not_services() -> None:
+    config = {
+        "triggers": [{"trigger": "state", "entity_id": "custom_domain.alpha"}],
+        "conditions": [
+            {
+                "condition": "template",
+                "value_template": "{{ is_state('sensor.weather', 'ok') }}",
+            }
+        ],
+        "actions": [
+            {
+                "action": "light.turn_on",
+                "target": {"entity_id": ["light.office", "light.missing"]},
+            }
+        ],
+    }
+
+    references = collect_entity_references(config, {"custom_domain"})
+
+    assert "custom_domain.alpha" in references
+    assert references["sensor.weather"] == {"template"}
+    assert "light.office" in references
+    assert "light.turn_on" not in references
+    assert "state" not in references
+
+
+def test_collects_modern_multidimensional_targets() -> None:
+    config = {
+        "triggers": [
+            {
+                "trigger": "battery.became_low",
+                "target": {
+                    "device_id": ["device-a"],
+                    "area_id": "kitchen",
+                    "floor_id": "ground",
+                    "label_id": ["important"],
+                },
+            }
+        ]
+    }
+
+    uses = iter_target_uses(config)
+
+    assert len(uses) == 1
+    assert uses[0].kind == "trigger"
+    assert uses[0].component == "battery.became_low"
+    assert uses[0].target["floor_id"] == ["ground"]

@@ -1,286 +1,166 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Inspect Home Assistant automation dependencies, targets, compatibility, and traces.">
   <title>Automation Inspector</title>
-  <style>
-    /* Base (Light Mode) */
-    body {
-      font-family: var(--font-family, sans-serif);
-      margin: 1rem;
-      background-color: white;
-      color: black;
-    }
-    table {
-      border-collapse: collapse;
-      width: 100%;
-      background: #fff;
-    }
-    th, td {
-      padding: .35rem .6rem;
-      border-bottom: 1px solid #ccc;
-      vertical-align: top;
-      color: black;
-    }
-    tr:nth-child(even) {
-      background: #f7f7f7;
-    }
-    code {
-      background: #eee;
-      border: 1px solid #ccc;
-      padding: 2px 4px;
-      border-radius: 4px;
-      margin: 2px 3px 2px 0;
-      display: inline-block;
-      color: black;
-    }
-    code.bad {
-      background: #fdd;
-      color: #900;
-      border-color: #d66;
-    }
-    a {
-      color: black;
-      text-decoration: none;
-    }
-    a:hover {
-      text-decoration: underline;
-    }
-
-    /* Dark Mode Overrides */
-    .dark-mode body {
-      background-color: #222;
-      color: #fff;
-    }
-    .dark-mode a {
-      color: #fff !important;
-    }
-    .dark-mode code {
-      background: #444 !important;
-      color: #fff !important;
-      border-color: #555 !important;
-    }
-    .dark-mode code.bad {
-      background: #600 !important;
-      color: #fdd !important;
-      border-color: #a33 !important;
-    }
-    .dark-mode table {
-      background: #333 !important;
-    }
-    .dark-mode tr:nth-child(even) {
-      background: #2a2a2a !important;
-    }
-    /* NEW – ensure cell text is visible in dark mode */
-    .dark-mode th,
-    .dark-mode td {
-      color: #fff !important;
-    }
-
-    /* Other styling */
-    h1 { margin: .2rem 0 1rem 0 }
-    #banner { margin: .6rem 0; font-weight: 600 }
-    thead th {
-      position: sticky; top: 0; background: inherit; z-index: 1;
-    }
-    tr.disabled td:first-child { opacity: .6; }
-    label, button { margin-right: 1rem; }
-    #controls { margin-bottom: 1em; }
-    #controls select,
-    #controls input { margin-left: .3em; }
-    #refreshBtn { cursor: pointer; }
-  </style>
+  <script nonce="__CSP_NONCE__">
+  (() => {
+    const param = new URLSearchParams(window.location.search).get("scoutTheme");
+    const theme =
+      param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", theme);
+  })();
+  </script>
+  <link rel="icon" href="static/favicon.ico" sizes="any">
+  <link rel="stylesheet" href="static/styles.css">
+  <script src="static/app.js" defer></script>
 </head>
 <body>
+  <a class="skip-link" href="#main-content">Skip to inspection results</a>
 
-<h1>Automation Inspector – Add-on</h1>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand-group">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" focusable="false">
+            <path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6zM10 7h4M7 10v4M17 10v4M10 17h4"/>
+          </svg>
+        </div>
+        <div>
+          <p class="eyebrow">Home Assistant health workspace</p>
+          <h1>Automation Inspector</h1>
+          <p class="subtitle" id="instance-name">Connecting to Home Assistant…</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button class="button button-secondary icon-button" id="theme-button" type="button" aria-label="Switch color theme">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9c0-.5-.04-1-.12-1.47A7 7 0 0 1 12 3Z"/></svg>
+        </button>
+        <button class="button button-primary" id="refresh-button" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.4-2.5L20 9M4 15l2.5 2.5A7 7 0 0 0 17.9 15"/></svg>
+          <span>Run inspection</span>
+        </button>
+      </div>
+    </header>
 
-<div id="banner">Loading…</div>
+    <div class="connection-strip" role="status" aria-live="polite">
+      <span class="status-dot" id="connection-dot" aria-hidden="true"></span>
+      <span id="connection-status">Preparing inspection…</span>
+      <span class="strip-separator" aria-hidden="true">·</span>
+      <span id="generated-time">Waiting for data</span>
+    </div>
 
-<label>
-  <input type="checkbox" id="errOnly"> show errors only
-</label>
-<button id="toggleDark">Toggle Dark Mode</button>
-<button id="refreshBtn" title="Rebuild dependency map now">🔄 Refresh now</button>
+    <main id="main-content" tabindex="-1">
+      <section aria-labelledby="overview-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Current snapshot</p>
+            <h2 id="overview-title">Health overview</h2>
+          </div>
+          <p class="section-note" id="version-note">Schema 2</p>
+        </div>
+        <div class="metrics-grid" id="metrics" aria-live="polite"></div>
+      </section>
 
-<div id="controls">
-  <label>
-    Last run:
-    <select id="runFilter">
-      <option value="all">All</option>
-      <option value="1">Last 1 day</option>
-      <option value="10">Last 10 days</option>
-      <option value="20">Last 20 days</option>
-      <option value="30">Last 30 days</option>
-      <option value="-30">Older than 30 days</option>
-      <option value="-90">Older than 90 days</option>
-    </select>
-  </label>
-  <label>
-    Search:
-    <input type="text" id="searchInput" placeholder="name or entity…">
-  </label>
-  <button id="searchBtn">Filter</button>
-</div>
+      <section class="alert-stack" id="alert-stack" aria-label="Inspection alerts" aria-live="polite"></section>
 
-<table id="tbl">
-  <thead>
-    <tr>
-      <th>Automation</th>
-      <th>Last Run</th>
-      <th>Entities</th>
-    </tr>
-  </thead>
-  <tbody></tbody>
-</table>
+      <section class="workspace" aria-labelledby="automation-title">
+        <div class="workspace-heading">
+          <div>
+            <p class="eyebrow">Dependency explorer</p>
+            <h2 id="automation-title">Automations</h2>
+            <p class="section-note" id="result-count">Loading results…</p>
+          </div>
+        </div>
 
-<script>
-  let DATA = {};
-  let LAST_FETCH = 0; // ms-since-epoch when we last fetched
+        <form class="filters" id="filter-form" role="search">
+          <label class="search-field" for="search-input">
+            <span class="visually-hidden">Search automations and entities</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+            <input id="search-input" type="search" autocomplete="off" placeholder="Search automation, entity, target, or issue…">
+          </label>
+          <label class="field-label" for="status-filter">
+            <span>Status</span>
+            <select id="status-filter">
+              <option value="all">All statuses</option>
+              <option value="enabled">Enabled</option>
+              <option value="disabled">Disabled</option>
+              <option value="not_loaded">Not loaded</option>
+              <option value="unavailable">Unavailable</option>
+            </select>
+          </label>
+          <label class="field-label" for="run-filter">
+            <span>Last run</span>
+            <select id="run-filter">
+              <option value="all">Any time</option>
+              <option value="1">Past day</option>
+              <option value="7">Past 7 days</option>
+              <option value="30">Past 30 days</option>
+              <option value="never">Never</option>
+              <option value="older">Over 30 days</option>
+            </select>
+          </label>
+          <label class="field-label" for="sort-filter">
+            <span>Sort</span>
+            <select id="sort-filter">
+              <option value="issues">Issues first</option>
+              <option value="name">Name</option>
+              <option value="recent">Most recent</option>
+              <option value="oldest">Least recent</option>
+            </select>
+          </label>
+          <label class="toggle-label" for="issues-only">
+            <input id="issues-only" type="checkbox">
+            <span class="toggle" aria-hidden="true"></span>
+            <span>Issues only</span>
+          </label>
+          <button class="button button-ghost" id="clear-filters" type="button">Clear</button>
+        </form>
 
-  // Detect Ingress vs direct
-  const isIngress = window.location.pathname.includes('/api/hassio_ingress');
-  const HA_BASE = isIngress
-    ? ''
-    : `${location.protocol}//${location.hostname}:8123`;
+        <div class="loading-state" id="loading-state">
+          <span class="spinner" aria-hidden="true"></span>
+          <div>
+            <strong>Inspecting automations</strong>
+            <p>Resolving dependencies, targets, compatibility, and recent traces.</p>
+          </div>
+        </div>
 
-  async function fetchData(force=false){
-    const url = `dependency_map.json${force ? '?force=1' : ''}`;
-    const resp = await fetch(url, {cache: 'no-store'});
-    DATA = await resp.json();
-    LAST_FETCH = Date.now();
-  }
+        <div class="empty-state hidden" id="empty-state">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"/></svg>
+          <h3>No matching automations</h3>
+          <p>Change the filters or run a new inspection.</p>
+        </div>
 
-  function timeAgo(ts){
-    const seconds = Math.floor((Date.now()-ts)/1000);
-    if(seconds < 60) return `${seconds}s ago`;
-    const minutes = Math.floor(seconds/60);
-    if(minutes < 60) return `${minutes}m ago`;
-    const hours = Math.floor(minutes/60);
-    if(hours < 24) return `${hours}h ago`;
-    const days = Math.floor(hours/24);
-    return `${days}d ago`;
-  }
+        <div class="automation-list" id="automation-list"></div>
 
-  function render(){
-    const tbody = document.querySelector("#tbl tbody");
-    tbody.innerHTML = "";
-    const errOnly    = document.getElementById("errOnly").checked;
-    const runFilter  = document.getElementById("runFilter").value;
-    const searchTerm = document.getElementById("searchInput").value.toLowerCase();
+        <div class="load-more-row hidden" id="load-more-row">
+          <button class="button button-secondary" id="load-more" type="button">Show more</button>
+        </div>
+      </section>
 
-    let errCount = 0, entCount = 0, badEnts = 0;
+      <section class="helper-panel hidden" id="helper-panel" aria-labelledby="helper-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Cleanup candidates</p>
+            <h2 id="helper-title">Unreferenced helpers</h2>
+          </div>
+          <span class="count-badge" id="helper-count">0</span>
+        </div>
+        <p class="helper-intro">These helpers were not found in the inspected automations. Templates, scripts, dashboards, and external integrations may still use them, so verify before deleting.</p>
+        <div class="helper-grid" id="helper-list"></div>
+      </section>
+    </main>
 
-    Object.values(DATA.automations || DATA).forEach(info => {
-      // errors-only filter
-      const hasBad = info.entities.some(e => !e.ok);
-      if (errOnly && !hasBad) return;
+    <footer>
+      <span id="footer-version">Automation Inspector</span>
+      <span>Read-only analysis · data stays inside Home Assistant</span>
+    </footer>
+  </div>
 
-      // date-range filter
-      if (runFilter !== "all") {
-        const lastTs = info.last_triggered
-          ? new Date(info.last_triggered).getTime()
-          : null;
-        const daysOld = lastTs
-          ? (Date.now() - lastTs) / (1000*60*60*24)
-          : Infinity;
-        const n = Math.abs(Number(runFilter));
-        if (runFilter.startsWith("-")) {
-          // older than N days
-          if (daysOld <= n) return;
-        } else {
-          // last N days
-          if (daysOld > n) return;
-        }
-      }
-
-      // search filter
-      if (searchTerm) {
-        const nameMatch = info.friendly_name.toLowerCase().includes(searchTerm);
-        const entMatch  = info.entities.some(e =>
-          e.id.toLowerCase().includes(searchTerm)
-        );
-        if (!nameMatch && !entMatch) return;
-      }
-
-      const tr = document.createElement("tr");
-      if (!info.enabled) tr.classList.add("disabled");
-
-      // Trace link
-      const trace = info.config_id
-        ? `<a href="${HA_BASE}/config/automation/edit/${info.config_id}" target="_blank">▶</a> `
-        : "";
-
-      // Last-run cell with color scale
-      let lastRunDisplay = "—", lastStyle = "";
-      if (info.last_triggered) {
-        const d = new Date(info.last_triggered);
-        lastRunDisplay = d.toLocaleString();
-        const daysOld = (Date.now() - d.getTime())/(1000*60*60*24);
-        const pct = Math.min(daysOld,90)/90;
-        const hue = Math.floor((1-pct)*120);
-        lastStyle = `background-color: hsl(${hue},100%,80%) !important;`;
-      }
-      const lastCell = `<td style="${lastStyle}">${lastRunDisplay}</td>`;
-
-      // Entities column
-      const ents = info.entities.map(e => {
-        const cls  = e.ok ? "" : "bad";
-        if (!e.ok) badEnts++;
-        const link = `${HA_BASE}/developer-tools/state?entity_id=${encodeURIComponent(e.id)}`;
-        return `<a href="${link}" target="_blank">
-                  <code class="${cls}">${e.id}: ${e.state}</code>
-                </a>`;
-      }).join(" ");
-
-      entCount += info.entities.length;
-      if (hasBad) errCount++;
-
-      tr.innerHTML = `
-        <td>${trace}<strong>${info.friendly_name}</strong></td>
-        ${lastCell}
-        <td>${ents}</td>
-      `;
-      tbody.appendChild(tr);
-    });
-
-    const autoTotal = Object.keys(DATA.automations || DATA).length;
-    const refreshedText = LAST_FETCH ? ` · refreshed ${timeAgo(LAST_FETCH)}` : "";
-    document.getElementById("banner").textContent =
-      `${autoTotal} automations · ${entCount} entities — ` +
-      (errCount
-        ? `${errCount} automations with issues, ${badEnts} bad entities`
-        : `all OK`) + refreshedText;
-  }
-
-  async function load(force=false){
-    await fetchData(force);
-    render();
-  }
-
-  // Event listeners
-  document.getElementById("errOnly").addEventListener("change", render);
-  document.getElementById("runFilter").addEventListener("change", render);
-  document.getElementById("searchBtn").addEventListener("click", render);
-  document.getElementById("refreshBtn").addEventListener("click", () => load(true));
-  document.getElementById("searchInput").addEventListener("keyup", e => {
-    if (e.key === "Enter") render();
-  });
-  document.getElementById("toggleDark").addEventListener("click", () => {
-    document.documentElement.classList.toggle('dark-mode');
-    localStorage.setItem(
-      'dark-mode',
-      document.documentElement.classList.contains('dark-mode')
-    );
-  });
-  if (localStorage.getItem('dark-mode') === 'true') {
-    document.documentElement.classList.add('dark-mode');
-  }
-
-  // Periodically update the "refreshed X ago" text every 30 s so it stays current
-  setInterval(render, 30000);
-
-  load();
-</script>
+  <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
+  <noscript><p class="noscript">Automation Inspector requires JavaScript to render the report.</p></noscript>
 </body>
 </html>
