@@ -29,7 +29,7 @@ jobs:
       tags: ${{ steps.version.outputs.tags }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Validate release version
         id: version
@@ -75,7 +75,7 @@ jobs:
       matrix: ${{ fromJSON(needs.init.outputs.matrix) }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Build and publish image
         uses: home-assistant/builder/actions/build-image@2026.06.0
@@ -123,7 +123,7 @@ jobs:
       contents: write
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Create release
         env:
