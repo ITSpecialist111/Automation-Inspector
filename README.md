@@ -7,6 +7,27 @@ It resolves modern Home Assistant targets, checks dependency health, validates a
 > [!IMPORTANT]
 > Version 1.0.0 is a breaking upgrade. It requires Home Assistant 2026.7.0 or newer, removes unauthenticated host-port access, and drops `armv7`. See [Migrating from 0.4.x](#migrating-from-04x).
 
+## Screenshots
+
+### Health overview
+
+![Automation Inspector health overview showing automation, dependency, compatibility, target, and trace metrics](docs/images/dashboard-overview-light.png)
+
+<table>
+  <tr>
+    <td width="68%" valign="top">
+      <strong>Expanded diagnostics</strong><br><br>
+      <img src="docs/images/dashboard-diagnostics-dark.png" alt="Expanded dark-mode automation diagnostics showing dependency health, a Home Assistant migration, target resolution, and trace errors">
+    </td>
+    <td width="32%" valign="top">
+      <strong>Responsive mobile view</strong><br><br>
+      <img src="docs/images/dashboard-mobile.png" alt="Automation Inspector health overview on a mobile viewport">
+    </td>
+  </tr>
+</table>
+
+_Screenshots use synthetic demo data; no Home Assistant instance data is included._
+
 ## Highlights
 
 - **Complete automation config** — reads each loaded automation through the canonical `automation/config` WebSocket API instead of relying on state attributes.
