@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.2 — 2026-07-12
+
+### Fixed
+
+- Recover automatically when the Supervisor WebSocket proxy temporarily returns HTTP 502 while Home Assistant Core is starting.
+- Retry every 10 seconds until the first successful inspection instead of waiting for the normal refresh interval.
+- Let ordinary dashboard requests trigger a coalesced recovery when no cached inspection exists.
+- Explain HTTP 502 as temporary Core/Supervisor unavailability rather than exposing a low-level WebSocket exception.
+
+### Changed
+
+- Start the web server and health endpoint immediately while the first Home Assistant inspection runs in the background.
+- Reduce expected startup-connection log noise while retaining full diagnostics for failures after a successful snapshot.
+
 ## 1.0.1 — 2026-07-11
 
 ### Fixed

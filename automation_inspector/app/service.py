@@ -14,6 +14,7 @@ from typing import Any, Protocol
 from app.settings import Settings
 
 LOG = logging.getLogger(__name__)
+STARTUP_RETRY_INTERVAL = 10.0
 
 
 class Builder(Protocol):
@@ -47,10 +48,6 @@ class InspectionService:
         self.last_success_monotonic: float | None = None
 
     async def start(self) -> None:
-        try:
-            await self.refresh()
-        except InspectionUnavailable:
-            LOG.warning("Initial Home Assistant inspection failed: %s", self.last_error)
         self._task = asyncio.create_task(self._refresh_loop(), name="inspection-refresh")
 
     async def close(self) -> None:
@@ -63,12 +60,19 @@ class InspectionService:
     async def _refresh_loop(self) -> None:
         while not self._stop.is_set():
             try:
-                await asyncio.wait_for(self._stop.wait(), timeout=self.settings.refresh_interval)
+                await self.refresh()
+            except InspectionUnavailable:
+                LOG.warning("Home Assistant inspection unavailable: %s", self.last_error)
+
+            delay = (
+                self.settings.refresh_interval
+                if self._cache is not None
+                else STARTUP_RETRY_INTERVAL
+            )
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=delay)
             except TimeoutError:
-                try:
-                    await self.refresh()
-                except InspectionUnavailable:
-                    LOG.warning("Background inspection failed: %s", self.last_error)
+                continue
 
     async def refresh(self) -> CachedInspection:
         observed_generation = self._cache.generation if self._cache else 0
@@ -86,9 +90,9 @@ class InspectionService:
                 ).encode("utf-8")
             except Exception as exc:
                 self.last_error = f"{type(exc).__name__}: {exc}"
-                LOG.exception("Inspection refresh failed")
                 if self._cache is None:
                     raise InspectionUnavailable(self.last_error) from exc
+                LOG.exception("Inspection refresh failed; retaining last-known-good data")
                 return self._cache
 
             generation = observed_generation + 1
@@ -103,6 +107,12 @@ class InspectionService:
         if self._cache is None:
             raise InspectionUnavailable(self.last_error or "Inspection is not ready")
         return self._cache
+
+    async def current_or_refresh(self) -> CachedInspection:
+        """Return cached data, attempting recovery when no snapshot exists."""
+        if self._cache is not None:
+            return self._cache
+        return await self.refresh()
 
     def status(self) -> dict[str, Any]:
         now = time.monotonic()

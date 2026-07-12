@@ -176,7 +176,7 @@ Do not expose that development server to an untrusted network. It does not add a
 ```bash
 docker build \
   --build-arg BUILD_ARCH=amd64 \
-  --build-arg BUILD_VERSION=1.0.1 \
+  --build-arg BUILD_VERSION=1.0.2 \
   -t automation-inspector:dev \
   automation_inspector
 ```

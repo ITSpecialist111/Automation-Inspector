@@ -93,3 +93,33 @@ async def test_api_returns_structured_unavailable_response() -> None:
     assert "Home Assistant is starting" in response.json()["detail"]
     assert response.json()["status"]["ready"] is False
     assert ready.status_code == 503
+
+
+class RecoveringBuilder:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def build(self) -> dict[str, object]:
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("Home Assistant is starting")
+        return {"schema_version": 2, "automations": {}, "orphans": []}
+
+
+@pytest.mark.anyio
+async def test_normal_inspection_request_recovers_empty_cache() -> None:
+    settings = Settings(refresh_interval=3600)
+    builder = RecoveringBuilder()
+    service = InspectionService(builder, settings)
+    app = create_app(settings, service)
+    transport = httpx.ASGITransport(app=app)
+
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=transport, base_url="http://test") as client,
+    ):
+        response = await client.get("/api/v1/inspection")
+
+    assert response.status_code == 200
+    assert response.json()["schema_version"] == 2
+    assert builder.calls == 2

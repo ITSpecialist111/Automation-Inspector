@@ -33,6 +33,8 @@ Select **Inspection details** to see dependency sources, target expansion, valid
 
 Home Assistant may still be starting, or its WebSocket API may be unavailable. Check the App log and wait for an automatic retry. `/ready` returns 503 until the first successful snapshot.
 
+An HTTP 502 from the Supervisor WebSocket proxy means Supervisor could not reach the Home Assistant Core API at that moment. Automation Inspector retries every 10 seconds until it succeeds. If the error persists after Home Assistant has fully started, restart Home Assistant and then restart the App; persistent 502 responses indicate a Core/Supervisor connectivity problem rather than an automation configuration problem.
+
 ### Last-known-good inspection
 
 The current refresh failed, but an older successful report remains visible. The banner and API status identify this state. Check Home Assistant connectivity and run another inspection.

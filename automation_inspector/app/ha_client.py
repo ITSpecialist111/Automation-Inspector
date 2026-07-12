@@ -24,6 +24,23 @@ class HomeAssistantConnectionError(RuntimeError):
     """Raised when a Home Assistant snapshot cannot be retrieved."""
 
 
+def _connection_error_message(error: Exception | None) -> str:
+    response = getattr(error, "response", None)
+    status_code = getattr(response, "status_code", None)
+    if status_code == 502:
+        return (
+            "Home Assistant is still starting or temporarily unavailable "
+            "(Supervisor WebSocket proxy returned HTTP 502). "
+            "Automation Inspector will retry automatically."
+        )
+    if status_code in {401, 403}:
+        return (
+            "Home Assistant rejected Automation Inspector API access "
+            f"(HTTP {status_code}). Restart or reinstall the App to refresh its permissions."
+        )
+    return f"Unable to connect to Home Assistant: {error}"
+
+
 @dataclass(frozen=True, slots=True)
 class CommandResult:
     success: bool
@@ -229,9 +246,7 @@ class HomeAssistantClient:
                 last_error = exc
                 if attempt < 2:
                     await asyncio.sleep(0.25 * (2**attempt))
-        raise HomeAssistantConnectionError(
-            f"Unable to connect to Home Assistant: {last_error}"
-        ) from last_error
+        raise HomeAssistantConnectionError(_connection_error_message(last_error)) from last_error
 
     async def _fetch_once(self, file_automations: list[FileAutomation]) -> SourceSnapshot:
         if not self.settings.token:

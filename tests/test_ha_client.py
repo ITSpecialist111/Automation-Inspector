@@ -4,8 +4,9 @@ import json
 
 import pytest
 from websockets.asyncio.server import ServerConnection, serve
-from websockets.exceptions import ConnectionClosed
+from websockets.exceptions import ConnectionClosed, WebSocketException
 
+import app.ha_client as ha_client_module
 from app.ha_client import HomeAssistantClient, HomeAssistantConnectionError
 from app.references import target_key
 from app.settings import Settings
@@ -221,3 +222,32 @@ async def test_home_assistant_client_requires_a_token() -> None:
 
     with pytest.raises(HomeAssistantConnectionError, match="TOKEN"):
         await client.fetch_snapshot([])
+
+
+class ProxyBadGateway(WebSocketException):
+    def __init__(self) -> None:
+        super().__init__("server rejected WebSocket connection: HTTP 502")
+        self.response = type("Response", (), {"status_code": 502})()
+
+
+@pytest.mark.anyio
+async def test_proxy_502_is_reported_as_temporary_startup_failure(monkeypatch) -> None:
+    calls = 0
+
+    def reject_connection(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        raise ProxyBadGateway
+
+    async def skip_delay(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(ha_client_module, "connect", reject_connection)
+    monkeypatch.setattr(ha_client_module.asyncio, "sleep", skip_delay)
+    client = HomeAssistantClient(Settings(token="test-token"))
+
+    with pytest.raises(HomeAssistantConnectionError, match="still starting") as raised:
+        await client.fetch_snapshot([])
+
+    assert "retry automatically" in str(raised.value)
+    assert calls == 3

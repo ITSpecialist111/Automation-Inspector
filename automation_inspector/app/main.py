@@ -126,7 +126,7 @@ def create_app(
             cached = (
                 await resolved_service.refresh()
                 if refresh or bool(force)
-                else resolved_service.current()
+                else await resolved_service.current_or_refresh()
             )
         except InspectionUnavailable as exc:
             return JSONResponse(
