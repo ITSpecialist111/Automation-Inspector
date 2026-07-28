@@ -1,4 +1,4 @@
-fastapi==0.139.0
+fastapi==0.140.7
 PyYAML==6.0.3
 uvicorn==0.51.0
-websockets==16.1
+websockets==16.1.1

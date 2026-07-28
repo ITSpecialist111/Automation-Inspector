@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.2 — 2026-07-28
+
+### Changed
+
+- Update runtime dependencies: FastAPI 0.140.7 and websockets 16.1.1.
+- Update development dependencies: Ruff 0.16.0, mypy 2.3.0, anyio 4.14.2, and types-PyYAML 6.0.12.20260724.
+
 ## 1.1.1 — 2026-07-28
 
 ### Fixed
