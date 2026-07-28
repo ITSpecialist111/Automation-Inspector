@@ -185,6 +185,8 @@ function renderMetrics() {
   const metrics = element("metrics");
   metrics.replaceChildren();
   const summary = state.data?.summary || {};
+  const itemCount = Number(summary.inspected_items || summary.automations || 0);
+  const scriptCount = Number(summary.scripts || 0);
   const unhealthyEntities =
     Number(summary.missing_entities || 0) +
     Number(summary.unavailable_entities || 0) +
@@ -192,15 +194,15 @@ function renderMetrics() {
     Number(summary.disabled_entities || 0);
   metrics.append(
     metricCard(
-      "Automations",
-      summary.automations,
-      `${summary.enabled || 0} enabled · ${summary.disabled || 0} disabled`,
+      "Inspected items",
+      itemCount,
+      `${summary.automations || 0} automations · ${scriptCount} scripts`,
     ),
     metricCard(
       "Need attention",
-      summary.automations_with_issues,
+      summary.items_with_issues ?? summary.automations_with_issues,
       `${summary.unloaded || 0} not loaded`,
-      summary.automations_with_issues ? "danger" : "",
+      (summary.items_with_issues ?? summary.automations_with_issues) ? "danger" : "",
     ),
     metricCard(
       "Dependency health",
@@ -280,7 +282,7 @@ function updateConnection(error = null) {
 }
 
 function automationSearchText(key, info) {
-  const parts = [key, info.friendly_name, info.status, info.config_id, info.mode];
+  const parts = [key, info.friendly_name, info.status, info.config_id, info.mode, info.item_type];
   (info.entities || []).forEach((entity) => {
     parts.push(entity.id, entity.name, entity.state, entity.status);
   });
@@ -301,6 +303,13 @@ function automationSearchText(key, info) {
   return parts.filter(Boolean).join(" ").toLocaleLowerCase();
 }
 
+function inspectionItems() {
+  return [
+    ...Object.entries(state.data?.automations || {}),
+    ...Object.entries(state.data?.scripts || {}),
+  ];
+}
+
 function daysSince(value) {
   const date = safeDate(value);
   return date ? (Date.now() - date.getTime()) / 86400000 : Number.POSITIVE_INFINITY;
@@ -312,7 +321,7 @@ function filteredAutomations() {
   const run = element("run-filter").value;
   const issuesOnly = element("issues-only").checked;
   const sort = element("sort-filter").value;
-  const entries = Object.entries(state.data?.automations || {}).filter(([key, info]) => {
+  const entries = inspectionItems().filter(([key, info]) => {
     if (status !== "all" && info.status !== status) return false;
     if (issuesOnly && Number(info.issue_count || 0) === 0) return false;
     const age = daysSince(info.last_triggered);
@@ -354,13 +363,17 @@ function entityLink(entity, preview = false) {
 }
 
 function automationHeader(key, info) {
+  const itemType = info.item_type === "script" ? "Script" : "Automation";
   const main = create("div", { className: "automation-main" });
   const heading = create("div", { className: "automation-heading" });
   heading.append(statusBadge(info.status));
   const title = create("div", { className: "automation-title-wrap" });
   title.append(
     create("h3", { className: "automation-title", text: info.friendly_name || key }),
-    create("span", { className: "automation-id", text: info.entity_id || `YAML · ${info.config_id || key}` }),
+    create("span", {
+      className: "automation-id",
+      text: `${itemType} · ${info.entity_id || `YAML · ${info.config_id || key}`}`,
+    }),
   );
   heading.append(title);
 
@@ -398,15 +411,16 @@ function automationHeader(key, info) {
 
   const actions = create("div", { className: "automation-actions" });
   if (info.loaded && info.config_id) {
+    const domain = info.item_type === "script" ? "script" : "automation";
     actions.append(
       link(
         "Edit",
-        homeAssistantUrl(`/config/automation/edit/${encodeURIComponent(info.config_id)}`),
+        homeAssistantUrl(`/config/${domain}/edit/${encodeURIComponent(info.config_id)}`),
         "button button-secondary small-button",
       ),
       link(
         "Traces",
-        homeAssistantUrl(`/config/automation/trace/${encodeURIComponent(info.config_id)}`),
+        homeAssistantUrl(`/config/${domain}/trace/${encodeURIComponent(info.config_id)}`),
         "button button-ghost small-button",
       ),
     );
@@ -611,10 +625,11 @@ function renderAutomations() {
   const loadMoreRow = element("load-more-row");
   loadMoreRow.classList.toggle("hidden", visible.length >= entries.length);
   element("load-more").textContent = `Show ${Math.min(PAGE_SIZE, entries.length - visible.length)} more`;
+  const total = inspectionItems().length;
   element("result-count").textContent =
-    entries.length === Object.keys(state.data.automations || {}).length
-      ? `${entries.length} automations inspected`
-      : `${entries.length} of ${Object.keys(state.data.automations || {}).length} automations match`;
+    entries.length === total
+      ? `${entries.length} items inspected`
+      : `${entries.length} of ${total} items match`;
 }
 
 function renderHelpers() {
@@ -698,6 +713,7 @@ async function loadInspection(force = false) {
     if (!body || body.schema_version !== 2 || typeof body.automations !== "object") {
       throw new Error("The server returned an unsupported inspection format.");
     }
+    if (!body.scripts || typeof body.scripts !== "object") body.scripts = {};
     state.data = body;
     state.etag = response.headers.get("ETag");
     state.lastLoadedAt = new Date();

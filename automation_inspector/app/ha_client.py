@@ -54,6 +54,8 @@ class SourceSnapshot:
     home_assistant_config: dict[str, Any]
     automation_configs: dict[str, dict[str, Any]] = field(default_factory=dict)
     automation_config_errors: dict[str, str] = field(default_factory=dict)
+    script_configs: dict[str, dict[str, Any]] = field(default_factory=dict)
+    script_config_errors: dict[str, str] = field(default_factory=dict)
     file_automations: list[FileAutomation] = field(default_factory=list)
     entity_registry: list[dict[str, Any]] = field(default_factory=list)
     device_registry: list[dict[str, Any]] = field(default_factory=list)
@@ -206,15 +208,17 @@ def _latest_traces(traces: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     for trace in traces:
         if trace.get("not_triggered"):
             continue
+        domain = str(trace.get("domain") or "automation")
         item_id = trace.get("item_id")
         timestamp = trace.get("timestamp")
         if not isinstance(item_id, str) or not isinstance(timestamp, dict):
             continue
+        key = f"{domain}:{item_id}"
         start = str(timestamp.get("start", ""))
-        previous = latest.get(item_id)
+        previous = latest.get(key)
         previous_start = str((previous or {}).get("timestamp", {}).get("start", ""))
         if previous is None or start > previous_start:
-            latest[item_id] = trace
+            latest[key] = trace
     return latest
 
 
@@ -280,7 +284,8 @@ class HomeAssistantClient:
                     "label_registry": {"type": "config/label_registry/list"},
                     "entity_sources": {"type": "entity/source"},
                     "services": {"type": "get_services"},
-                    "traces": {"type": "trace/list", "domain": "automation"},
+                    "automation_traces": {"type": "trace/list", "domain": "automation"},
+                    "script_traces": {"type": "trace/list", "domain": "script"},
                 }
             )
 
@@ -301,11 +306,23 @@ class HomeAssistantClient:
                 for item in states
                 if str(item.get("entity_id", "")).startswith("automation.")
             )
+            script_ids = sorted(
+                str(item["entity_id"])
+                for item in states
+                if str(item.get("entity_id", "")).startswith("script.")
+            )
             config_results = await _call_in_batches(
                 session,
                 {
                     entity_id: {"type": "automation/config", "entity_id": entity_id}
                     for entity_id in automation_ids
+                },
+            )
+            script_config_results = await _call_in_batches(
+                session,
+                {
+                    entity_id: {"type": "script/config", "entity_id": entity_id}
+                    for entity_id in script_ids
                 },
             )
             automation_configs: dict[str, dict[str, Any]] = {}
@@ -317,6 +334,15 @@ class HomeAssistantClient:
                     automation_configs[entity_id] = config
                 else:
                     automation_config_errors[entity_id] = response.error or "Config unavailable"
+            script_configs: dict[str, dict[str, Any]] = {}
+            script_config_errors: dict[str, str] = {}
+            for entity_id, response in script_config_results.items():
+                result = response.result
+                config = result.get("config") if isinstance(result, dict) else None
+                if response.success and isinstance(config, dict):
+                    script_configs[entity_id] = config
+                else:
+                    script_config_errors[entity_id] = response.error or "Config unavailable"
 
             trigger_snapshot = await session.subscription_snapshot("trigger_platforms/subscribe")
             condition_snapshot = await session.subscription_snapshot(
@@ -340,6 +366,9 @@ class HomeAssistantClient:
             configs_for_analysis: dict[str, dict[str, Any]] = {
                 f"runtime:{entity_id}": config for entity_id, config in automation_configs.items()
             }
+            configs_for_analysis.update(
+                {f"runtime:{entity_id}": config for entity_id, config in script_configs.items()}
+            )
             configs_for_analysis.update(
                 {automation.key: automation.config for automation in file_automations}
             )
@@ -369,10 +398,17 @@ class HomeAssistantClient:
                 if request:
                     detail_requests[f"validation:{key}"] = request
 
-            traces = _list_result(base_results, "traces", warnings)
+            traces = [
+                dict(trace, domain="automation")
+                for trace in _list_result(base_results, "automation_traces", warnings)
+            ]
+            traces.extend(
+                dict(trace, domain="script")
+                for trace in _list_result(base_results, "script_traces", warnings)
+            )
             latest_traces = _latest_traces(traces)
             if self.settings.inspect_traces:
-                for item_id, trace in latest_traces.items():
+                for trace_key, trace in latest_traces.items():
                     if trace.get("script_execution") not in {
                         "error",
                         "aborted",
@@ -380,10 +416,12 @@ class HomeAssistantClient:
                     } and not trace.get("error"):
                         continue
                     run_id = trace.get("run_id")
+                    domain = str(trace.get("domain") or "automation")
+                    item_id = trace.get("item_id")
                     if isinstance(run_id, str):
-                        detail_requests[f"trace:{item_id}"] = {
+                        detail_requests[f"trace:{trace_key}"] = {
                             "type": "trace/get",
-                            "domain": "automation",
+                            "domain": domain,
                             "item_id": item_id,
                             "run_id": run_id,
                         }
@@ -422,6 +460,8 @@ class HomeAssistantClient:
                 home_assistant_config=config_response.result,
                 automation_configs=automation_configs,
                 automation_config_errors=automation_config_errors,
+                script_configs=script_configs,
+                script_config_errors=script_config_errors,
                 file_automations=file_automations,
                 entity_registry=_list_result(base_results, "entity_registry", warnings),
                 device_registry=_list_result(base_results, "device_registry", warnings),
