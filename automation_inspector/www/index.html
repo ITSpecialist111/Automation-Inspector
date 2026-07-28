@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="Inspect Home Assistant automation dependencies, targets, compatibility, and traces.">
+  <meta name="description" content="Inspect Home Assistant automation and script dependencies, targets, compatibility, and traces.">
   <title>Automation Inspector</title>
   <script nonce="__CSP_NONCE__">
   (() => {
@@ -71,16 +71,16 @@
         <div class="workspace-heading">
           <div>
             <p class="eyebrow">Dependency explorer</p>
-            <h2 id="automation-title">Automations</h2>
+            <h2 id="automation-title">Automations & scripts</h2>
             <p class="section-note" id="result-count">Loading results…</p>
           </div>
         </div>
 
         <form class="filters" id="filter-form" role="search">
           <label class="search-field" for="search-input">
-            <span class="visually-hidden">Search automations and entities</span>
+            <span class="visually-hidden">Search automations, scripts, and entities</span>
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
-            <input id="search-input" type="search" autocomplete="off" placeholder="Search automation, entity, target, or issue…">
+            <input id="search-input" type="search" autocomplete="off" placeholder="Search automation, script, entity, target, or issue…">
           </label>
           <label class="field-label" for="status-filter">
             <span>Status</span>
@@ -123,14 +123,14 @@
         <div class="loading-state" id="loading-state">
           <span class="spinner" aria-hidden="true"></span>
           <div>
-            <strong>Inspecting automations</strong>
+            <strong>Inspecting automations and scripts</strong>
             <p>Resolving dependencies, targets, compatibility, and recent traces.</p>
           </div>
         </div>
 
         <div class="empty-state hidden" id="empty-state">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"/></svg>
-          <h3>No matching automations</h3>
+          <h3>No matching items</h3>
           <p>Change the filters or run a new inspection.</p>
         </div>
 
@@ -149,7 +149,7 @@
           </div>
           <span class="count-badge" id="helper-count">0</span>
         </div>
-        <p class="helper-intro">These helpers were not found in the inspected automations. Templates, scripts, dashboards, and external integrations may still use them, so verify before deleting.</p>
+        <p class="helper-intro">These helpers were not found in the inspected automations or scripts. Templates, dashboards, integrations, and external clients may still use them, so verify before deleting.</p>
         <div class="helper-grid" id="helper-list"></div>
       </section>
     </main>

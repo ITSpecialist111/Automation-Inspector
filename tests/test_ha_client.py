@@ -7,7 +7,7 @@ from websockets.asyncio.server import ServerConnection, serve
 from websockets.exceptions import ConnectionClosed, WebSocketException
 
 import app.ha_client as ha_client_module
-from app.ha_client import HomeAssistantClient, HomeAssistantConnectionError
+from app.ha_client import HomeAssistantClient, HomeAssistantConnectionError, _validation_request
 from app.references import target_key
 from app.settings import Settings
 
@@ -30,6 +30,10 @@ async def test_home_assistant_client_fetches_complete_websocket_snapshot() -> No
                 "target": {"entity_id": "{{ sonos_speaker }}"},
             },
         ],
+    }
+    script_config = {
+        "alias": "WebSocket script",
+        "sequence": [{"action": "light.turn_on", "target": {"entity_id": "light.office"}}],
     }
     received_types: list[str] = []
     resolved_targets: list[dict[str, object]] = []
@@ -57,6 +61,11 @@ async def test_home_assistant_client_fetches_complete_websocket_snapshot() -> No
                             "entity_id": "sensor.kitchen_battery",
                             "state": "12",
                             "attributes": {"device_class": "battery"},
+                        },
+                        {
+                            "entity_id": "script.websocket_script",
+                            "state": "off",
+                            "attributes": {"friendly_name": "WebSocket script"},
                         },
                     ]
                 elif request_type == "get_config":
@@ -94,17 +103,30 @@ async def test_home_assistant_client_fetches_complete_websocket_snapshot() -> No
                 elif request_type == "get_services":
                     result = {"light": {"turn_on": {"target": {"entity": [{"domain": ["light"]}]}}}}
                 elif request_type == "trace/list":
-                    result = [
-                        {
-                            "item_id": "one",
-                            "run_id": "run-1",
-                            "timestamp": {"start": "2026-07-10T10:00:00+00:00"},
-                            "script_execution": "error",
-                            "error": "Template failed",
-                        }
-                    ]
+                    if request["domain"] == "automation":
+                        result = [
+                            {
+                                "item_id": "one",
+                                "run_id": "run-1",
+                                "timestamp": {"start": "2026-07-10T10:00:00+00:00"},
+                                "script_execution": "error",
+                                "error": "Template failed",
+                            }
+                        ]
+                    else:
+                        result = [
+                            {
+                                "item_id": "websocket_script",
+                                "run_id": "run-script-1",
+                                "timestamp": {"start": "2026-07-10T11:00:00+00:00"},
+                                "script_execution": "error",
+                                "error": "Script failed",
+                            }
+                        ]
                 elif request_type == "automation/config":
                     result = {"config": automation_config}
+                elif request_type == "script/config":
+                    result = {"config": script_config}
                 elif request_type == "trigger_platforms/subscribe":
                     await websocket.send(
                         json.dumps(
@@ -170,7 +192,14 @@ async def test_home_assistant_client_fetches_complete_websocket_snapshot() -> No
                         "actions": {"valid": True, "error": None},
                     }
                 elif request_type == "trace/get":
-                    result = {"trace": {"action/0": [{"template_errors": ["Undefined variable"]}]}}
+                    if request["domain"] == "automation":
+                        result = {
+                            "trace": {"action/0": [{"template_errors": ["Undefined variable"]}]}
+                        }
+                    else:
+                        result = {
+                            "trace": {"sequence/0": [{"template_errors": ["Script variable"]}]}
+                        }
                 else:
                     raise AssertionError(f"Unexpected command: {request_type}")
 
@@ -198,6 +227,7 @@ async def test_home_assistant_client_fetches_complete_websocket_snapshot() -> No
 
     assert snapshot.home_assistant_config["version"] == "2026.7.2"
     assert snapshot.automation_configs["automation.websocket_automation"] == automation_config
+    assert snapshot.script_configs["script.websocket_script"] == script_config
     assert snapshot.device_registry[0]["id"] == "battery-device"
     assert snapshot.label_registry == []
     assert "Labels unavailable" in snapshot.warnings[0]
@@ -205,14 +235,20 @@ async def test_home_assistant_client_fetches_complete_websocket_snapshot() -> No
     assert snapshot.target_resolutions[key]["referenced_entities"] == ["sensor.kitchen_battery"]
     assert snapshot.target_resolutions[key]["primary_entities"] == ["sensor.kitchen_battery"]
     assert snapshot.validations["runtime:automation.websocket_automation"]["actions"]["valid"]
-    assert snapshot.trace_details["one"]["trace"]["action/0"][0]["template_errors"] == [
+    assert snapshot.trace_details["automation:one"]["trace"]["action/0"][0]["template_errors"] == [
         "Undefined variable"
     ]
+    assert snapshot.trace_details["script:websocket_script"]["trace"]["sequence/0"][0][
+        "template_errors"
+    ] == ["Script variable"]
     assert "unsubscribe_events" in received_types
+    assert "script/config" in received_types
     assert "trace/get" in received_types
     assert resolved_targets == [
         {"area_id": ["kitchen"]},
         {"area_id": ["kitchen"]},
+        {"entity_id": ["light.office"]},
+        {"entity_id": ["light.office"]},
     ]
 
 
@@ -251,3 +287,21 @@ async def test_proxy_502_is_reported_as_temporary_startup_failure(monkeypatch) -
 
     assert "retry automatically" in str(raised.value)
     assert calls == 3
+
+
+def test_validation_request_validates_script_sequences() -> None:
+    sequence = [{"action": "light.turn_on"}]
+
+    script_request = _validation_request({"alias": "x", "sequence": sequence})
+
+    assert script_request is not None
+    assert script_request["actions"] == sequence
+
+    automation_request = _validation_request(
+        {"alias": "x", "actions": [{"action": "light.turn_off"}], "sequence": sequence}
+    )
+
+    assert automation_request is not None
+    assert automation_request["actions"] == [{"action": "light.turn_off"}]
+
+    assert _validation_request({"alias": "x"}) is None

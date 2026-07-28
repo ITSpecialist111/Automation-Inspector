@@ -299,6 +299,75 @@ def test_duplicate_file_entries_collapse_even_when_runtime_config_differs() -> N
     assert list(report["automations"]) == ["automation.loaded_copy"]
 
 
+def test_build_inspection_includes_loaded_scripts() -> None:
+    script_config = {
+        "alias": "Night lights",
+        "sequence": [
+            {"service": "light.turn_on", "target": {"entity_id": "light.hall"}},
+            {"action": "notify.send_message", "data": {"message": "Done"}},
+        ],
+    }
+    snapshot = SourceSnapshot(
+        states=[
+            {
+                "entity_id": "script.night_lights",
+                "state": "off",
+                "attributes": {"friendly_name": "Night lights"},
+            },
+            {
+                "entity_id": "light.hall",
+                "state": "off",
+                "attributes": {"friendly_name": "Hall"},
+            },
+        ],
+        home_assistant_config={"version": "2026.7.2"},
+        script_configs={"script.night_lights": script_config},
+        traces=[
+            {
+                "domain": "script",
+                "item_id": "night_lights",
+                "run_id": "run-1",
+                "timestamp": {"start": "2026-07-10T10:00:00+00:00"},
+                "script_execution": "error",
+            }
+        ],
+        trace_details={"script:night_lights": {"trace": {"action/0": []}}},
+    )
+
+    report = build_inspection(snapshot, Settings())
+    script = report["scripts"]["script.night_lights"]
+
+    assert report["summary"]["automations"] == 0
+    assert report["summary"]["scripts"] == 1
+    assert report["summary"]["inspected_items"] == 1
+    assert script["item_type"] == "script"
+    assert script["status"] == "enabled"
+    assert {entity["id"] for entity in script["entities"]} == {"light.hall"}
+    assert {finding["code"] for finding in script["compatibility_issues"]} == {
+        "legacy_service_action_key"
+    }
+    assert script["trace"]["script_execution"] == "error"
+
+
+def test_excluding_disabled_automations_keeps_idle_scripts() -> None:
+    snapshot = SourceSnapshot(
+        states=[
+            {
+                "entity_id": "script.idle_script",
+                "state": "off",
+                "attributes": {"friendly_name": "Idle script"},
+            }
+        ],
+        home_assistant_config={"version": "2026.7.2"},
+        script_configs={"script.idle_script": {"alias": "Idle script", "sequence": []}},
+    )
+
+    report = build_inspection(snapshot, Settings(include_disabled=False))
+
+    assert list(report["scripts"]) == ["script.idle_script"]
+    assert report["scripts"]["script.idle_script"]["status"] == "enabled"
+
+
 def test_excluding_disabled_automation_does_not_report_its_file_as_unloaded() -> None:
     config = {"id": "off-id", "alias": "Off", "triggers": [], "actions": []}
     snapshot = SourceSnapshot(
