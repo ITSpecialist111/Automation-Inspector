@@ -497,6 +497,10 @@ def build_inspection(snapshot: SourceSnapshot, settings: Settings) -> dict[str, 
         )
         if file_automation:
             matched_file_keys.add(file_automation.key)
+            if runtime_config is not None and config_id:
+                for candidate in file_by_id.get(config_id, []):
+                    if candidate.config == runtime_config:
+                        matched_file_keys.add(candidate.key)
         if not settings.include_disabled and state.get("state") != "on":
             continue
 
