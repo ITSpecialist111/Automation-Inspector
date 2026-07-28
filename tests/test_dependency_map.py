@@ -236,6 +236,69 @@ def test_duplicate_file_id_and_registry_only_helper_remain_visible() -> None:
     ]
 
 
+def test_identical_file_duplicates_matching_loaded_automation_do_not_create_unloaded_rows() -> None:
+    config = {
+        "id": "duplicate",
+        "alias": "Loaded copy",
+        "triggers": [],
+        "actions": [],
+    }
+    snapshot = SourceSnapshot(
+        states=[
+            {
+                "entity_id": "automation.loaded_copy",
+                "state": "on",
+                "attributes": {"id": "duplicate"},
+            }
+        ],
+        home_assistant_config={"version": "2026.7.2"},
+        automation_configs={"automation.loaded_copy": config},
+        file_automations=[
+            FileAutomation(0, "duplicate", config),
+            FileAutomation(1, "duplicate", dict(config)),
+            FileAutomation(2, "duplicate", dict(config)),
+        ],
+    )
+
+    report = build_inspection(snapshot, Settings())
+
+    assert report["summary"]["automations"] == 1
+    assert report["summary"]["unloaded"] == 0
+    assert list(report["automations"]) == ["automation.loaded_copy"]
+
+
+def test_duplicate_file_entries_collapse_even_when_runtime_config_differs() -> None:
+    file_config = {
+        "id": "duplicate",
+        "alias": "Loaded copy",
+        "triggers": [],
+        "actions": [],
+    }
+    runtime_config = dict(file_config) | {"mode": "single"}
+    snapshot = SourceSnapshot(
+        states=[
+            {
+                "entity_id": "automation.loaded_copy",
+                "state": "on",
+                "attributes": {"id": "duplicate"},
+            }
+        ],
+        home_assistant_config={"version": "2026.7.2"},
+        automation_configs={"automation.loaded_copy": runtime_config},
+        file_automations=[
+            FileAutomation(0, "duplicate", dict(file_config)),
+            FileAutomation(1, "duplicate", dict(file_config)),
+            FileAutomation(2, "duplicate", dict(file_config)),
+        ],
+    )
+
+    report = build_inspection(snapshot, Settings())
+
+    assert report["summary"]["automations"] == 1
+    assert report["summary"]["unloaded"] == 0
+    assert list(report["automations"]) == ["automation.loaded_copy"]
+
+
 def test_build_inspection_includes_loaded_scripts() -> None:
     script_config = {
         "alias": "Night lights",
