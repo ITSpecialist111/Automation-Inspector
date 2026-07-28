@@ -74,3 +74,20 @@ def test_partitions_runtime_templates_from_static_targets() -> None:
         "entity_id": ["media_player.{{ room }}", "{{ sonos_speaker }}"]
     }
     assert references == {"media_player.office": {"action_target", "explicit"}}
+
+
+def test_ignores_event_type_but_keeps_event_entity_data() -> None:
+    config = {
+        "triggers": [
+            {
+                "trigger": "event",
+                "event_type": "timer.finished",
+                "event_data": {"entity_id": "timer.test"},
+            }
+        ],
+        "actions": [],
+    }
+
+    references = collect_entity_references(config, set())
+
+    assert references == {"timer.test": {"explicit"}}
