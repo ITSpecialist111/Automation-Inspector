@@ -185,28 +185,32 @@ def _latest_traces(traces: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]
     for trace in traces:
         if trace.get("not_triggered"):
             continue
+        domain = str(trace.get("domain") or "automation")
         item_id = trace.get("item_id")
         timestamp = trace.get("timestamp")
         if not isinstance(item_id, str) or not isinstance(timestamp, dict):
             continue
+        key = f"{domain}:{item_id}"
         start = str(timestamp.get("start", ""))
-        previous = latest.get(item_id)
+        previous = latest.get(key)
         previous_start = str((previous or {}).get("timestamp", {}).get("start", ""))
         if previous is None or start > previous_start:
-            latest[item_id] = trace
+            latest[key] = trace
     return latest
 
 
 def _trace_info(
+    domain: str,
     config_id: str | None,
     latest: Mapping[str, dict[str, Any]],
     details: Mapping[str, dict[str, Any]],
 ) -> dict[str, Any] | None:
-    if not config_id or config_id not in latest:
+    trace_key = f"{domain}:{config_id}" if config_id else None
+    if not trace_key or trace_key not in latest:
         return None
-    summary = latest[config_id]
+    summary = latest[trace_key]
     template_errors: list[str] = []
-    detail = details.get(config_id)
+    detail = details.get(trace_key)
     if isinstance(detail, dict):
         steps = detail.get("trace")
         if isinstance(steps, dict):
@@ -328,6 +332,7 @@ def _target_rows(
 
 def _analyze_automation(
     *,
+    domain: str,
     key: str,
     state: dict[str, Any] | None,
     configs: list[tuple[str, dict[str, Any]]],
@@ -383,7 +388,7 @@ def _analyze_automation(
             }
         )
 
-    trace = _trace_info(config_id, latest_traces, snapshot.trace_details)
+    trace = _trace_info(domain, config_id, latest_traces, snapshot.trace_details)
     trace_is_issue = bool(
         trace
         and (
@@ -396,11 +401,12 @@ def _analyze_automation(
     compatibility_errors = sum(
         1 for finding in compatibility if finding["severity"] in {"error", "warning"}
     )
+    state_value = str(state.get("state")) if state is not None else None
     if not loaded:
         status = "not_loaded"
-    elif state is not None and str(state.get("state")) == "on":
+    elif state_value == "on" or (domain == "script" and state_value != "unavailable"):
         status = "enabled"
-    elif state is not None and str(state.get("state")) == "unavailable":
+    elif state_value == "unavailable":
         status = "unavailable"
     else:
         status = "disabled"
@@ -409,6 +415,8 @@ def _analyze_automation(
     warnings: list[str] = []
     if loaded and key in snapshot.automation_config_errors:
         warnings.append(snapshot.automation_config_errors[key])
+    if loaded and domain == "script" and key in snapshot.script_config_errors:
+        warnings.append(snapshot.script_config_errors[key])
     if "use_blueprint" in primary_config:
         warnings.append("Blueprint analysis is limited to its configured inputs.")
 
@@ -417,6 +425,8 @@ def _analyze_automation(
     )
     return {
         "entity_id": key if loaded else None,
+        "domain": domain,
+        "item_type": "automation" if domain == "automation" else "script",
         "friendly_name": friendly_name,
         "enabled": status == "enabled",
         "loaded": loaded,
@@ -482,6 +492,7 @@ def build_inspection(snapshot: SourceSnapshot, settings: Settings) -> dict[str, 
 
     latest_traces = _latest_traces(snapshot.traces)
     automations: dict[str, dict[str, Any]] = {}
+    scripts: dict[str, dict[str, Any]] = {}
     matched_file_keys: set[str] = set()
     for entity_id, state in sorted(state_map.items()):
         if not entity_id.startswith("automation."):
@@ -508,9 +519,39 @@ def build_inspection(snapshot: SourceSnapshot, settings: Settings) -> dict[str, 
         if not configs:
             configs.append((f"attributes:{entity_id}", attributes))
         automations[entity_id] = _analyze_automation(
+            domain="automation",
             key=entity_id,
             state=state,
             configs=configs,
+            config_id=config_id,
+            loaded=True,
+            snapshot=snapshot,
+            state_map=state_map,
+            registry_map=registry_map,
+            known_domains=known_domains,
+            latest_traces=latest_traces,
+        )
+
+    for entity_id, state in sorted(state_map.items()):
+        if not entity_id.startswith("script."):
+            continue
+        attributes = state.get("attributes", {})
+        if not isinstance(attributes, dict):
+            attributes = {}
+        raw_config_id = attributes.get("id") or entity_id.split(".", 1)[1]
+        config_id = str(raw_config_id) if raw_config_id is not None else None
+        runtime_config = snapshot.script_configs.get(entity_id)
+
+        script_configs: list[tuple[str, dict[str, Any]]] = []
+        if runtime_config:
+            script_configs.append((f"runtime:{entity_id}", runtime_config))
+        else:
+            script_configs.append((f"attributes:{entity_id}", attributes))
+        scripts[entity_id] = _analyze_automation(
+            domain="script",
+            key=entity_id,
+            state=state,
+            configs=script_configs,
             config_id=config_id,
             loaded=True,
             snapshot=snapshot,
@@ -527,6 +568,7 @@ def build_inspection(snapshot: SourceSnapshot, settings: Settings) -> dict[str, 
         if key in automations:
             key = f"{key}:{file_automation.index}"
         automations[key] = _analyze_automation(
+            domain="automation",
             key=key,
             state=None,
             configs=[(file_automation.key, file_automation.config)],
@@ -540,7 +582,9 @@ def build_inspection(snapshot: SourceSnapshot, settings: Settings) -> dict[str, 
         )
 
     all_referenced = {
-        entity["id"] for automation in automations.values() for entity in automation["entities"]
+        entity["id"]
+        for item in [*automations.values(), *scripts.values()]
+        for entity in item["entities"]
     }
     unreferenced_helpers = []
     for entity_id in sorted(set(state_map) | set(registry_map)):
@@ -567,18 +611,18 @@ def build_inspection(snapshot: SourceSnapshot, settings: Settings) -> dict[str, 
         )
 
     entity_rows = [
-        entity for automation in automations.values() for entity in automation["entities"]
+        entity for item in [*automations.values(), *scripts.values()] for entity in item["entities"]
     ]
     compatibility_rows = [
         finding
-        for automation in automations.values()
-        for finding in automation["compatibility_issues"]
+        for item in [*automations.values(), *scripts.values()]
+        for finding in item["compatibility_issues"]
         if finding["severity"] in {"error", "warning"}
     ]
     unresolved_targets = sum(
         len(target[field])
-        for automation in automations.values()
-        for target in automation["targets"]
+        for item in [*automations.values(), *scripts.values()]
+        for target in item["targets"]
         for field in (
             "missing_devices",
             "missing_areas",
@@ -588,12 +632,12 @@ def build_inspection(snapshot: SourceSnapshot, settings: Settings) -> dict[str, 
     )
     trace_failures = sum(
         1
-        for automation in automations.values()
-        if automation["trace"]
+        for item in [*automations.values(), *scripts.values()]
+        if item["trace"]
         and (
-            automation["trace"].get("error")
-            or automation["trace"].get("template_errors")
-            or automation["trace"].get("script_execution") in {"error", "failed_max_runs"}
+            item["trace"].get("error")
+            or item["trace"].get("template_errors")
+            or item["trace"].get("script_execution") in {"error", "failed_max_runs"}
         )
     )
     ha_config = snapshot.home_assistant_config
@@ -608,8 +652,12 @@ def build_inspection(snapshot: SourceSnapshot, settings: Settings) -> dict[str, 
         },
         "summary": {
             "automations": len(automations),
+            "scripts": len(scripts),
+            "inspected_items": len(automations) + len(scripts),
             "enabled": sum(1 for item in automations.values() if item["enabled"]),
+            "enabled_scripts": sum(1 for item in scripts.values() if item["enabled"]),
             "disabled": sum(1 for item in automations.values() if item["status"] == "disabled"),
+            "disabled_scripts": sum(1 for item in scripts.values() if item["status"] == "disabled"),
             "unloaded": sum(1 for item in automations.values() if not item["loaded"]),
             "dependency_references": len(entity_rows),
             "unique_entities": len({row["id"] for row in entity_rows}),
@@ -620,6 +668,10 @@ def build_inspection(snapshot: SourceSnapshot, settings: Settings) -> dict[str, 
             "automations_with_issues": sum(
                 1 for item in automations.values() if item["issue_count"] > 0
             ),
+            "scripts_with_issues": sum(1 for item in scripts.values() if item["issue_count"] > 0),
+            "items_with_issues": sum(
+                1 for item in [*automations.values(), *scripts.values()] if item["issue_count"] > 0
+            ),
             "compatibility_issues": len(compatibility_rows),
             "unresolved_targets": unresolved_targets,
             "trace_failures": trace_failures,
@@ -627,6 +679,7 @@ def build_inspection(snapshot: SourceSnapshot, settings: Settings) -> dict[str, 
             "duration_ms": round((time.perf_counter() - started) * 1000, 1),
         },
         "automations": automations,
+        "scripts": scripts,
         "unreferenced_helpers": unreferenced_helpers,
         "orphans": [helper["id"] for helper in unreferenced_helpers],
         "warnings": snapshot.warnings,

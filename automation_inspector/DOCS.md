@@ -1,6 +1,6 @@
 # Automation Inspector App documentation
 
-Automation Inspector performs read-only health analysis of Home Assistant automations. Open it from the Home Assistant sidebar after starting the App.
+Automation Inspector performs read-only health analysis of Home Assistant automations and scripts. Open it from the Home Assistant sidebar after starting the App.
 
 ## Configuration
 
@@ -9,7 +9,7 @@ Automation Inspector performs read-only health analysis of Home Assistant automa
 | `refresh_interval` | 300 | Seconds between background inspections |
 | `request_timeout` | 15 | Timeout for each WebSocket response |
 | `include_disabled` | `true` | Analyze automations that are turned off |
-| `inspect_traces` | `true` | Retrieve details for recent failed traces |
+| `inspect_traces` | `true` | Retrieve details for recent failed automation and script traces |
 | `scan_automations_file` | `true` | Find UI-managed automations that did not load |
 
 Restart the App after changing options.
@@ -21,7 +21,7 @@ Restart the App after changing options.
 - **Unavailable / unknown** — Home Assistant has a state object, but its current state is unhealthy.
 - **Not loaded** — the automation exists in `automations.yaml` but has no runtime automation entity.
 - **Unresolved target** — a referenced device, area, floor, or label no longer exists.
-- **Runtime target** — a Jinja template such as `{{ sonos_speaker }}` that Home Assistant resolves only when the automation runs; this is informational, not a failure.
+- **Runtime target** — a Jinja template such as `{{ sonos_speaker }}` that Home Assistant resolves only when the automation or script runs; this is informational, not a failure.
 - **Compatibility** — Home Assistant validation failed or the configuration uses a removed/deprecated construct.
 - **Trace failure** — the latest retained execution ended in an error or contains template errors.
 
@@ -49,7 +49,7 @@ This is intentional in 1.0.0. Automation definitions and entity states are sensi
 
 ### Unreferenced helper appears in use elsewhere
 
-The helper list considers automations only. Scripts, dashboards, integrations, templates, and external clients are outside its scope. Always verify before deleting a helper.
+The helper list considers inspected automations and scripts only. Dashboards, integrations, templates, and external clients are outside its scope. Always verify before deleting a helper.
 
 ## Data handling
 

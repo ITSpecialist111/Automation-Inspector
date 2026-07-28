@@ -10,7 +10,7 @@ configuration:
     description: Analyze automations that are currently turned off as well as enabled automations.
   inspect_traces:
     name: Inspect recent traces
-    description: Retrieve details for recent failed automation runs and template errors.
+    description: Retrieve details for recent failed automation and script runs and template errors.
   scan_automations_file:
     name: Scan automations.yaml
     description: Read the configuration file to report automations that failed to load.

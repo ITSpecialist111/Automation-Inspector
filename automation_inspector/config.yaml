@@ -2,8 +2,8 @@ name: Automation Inspector
 version: 1.0.2
 slug: automation_inspector
 description: >-
-  Audits automation dependencies, targets, compatibility, and recent failures
-  without sending Home Assistant data outside your instance.
+  Audits automation and script dependencies, targets, compatibility, and recent
+  failures without sending Home Assistant data outside your instance.
 url: https://github.com/ITSpecialist111/Automation-Inspector
 arch:
   - aarch64

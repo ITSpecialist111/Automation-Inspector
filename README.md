@@ -1,8 +1,8 @@
 # Automation Inspector
 
-Automation Inspector is a read-only **Home Assistant App** that audits every loaded automation and, when available, every UI-managed automation in `automations.yaml`.
+Automation Inspector is a read-only **Home Assistant App** that audits every loaded automation and script and, when available, every UI-managed automation in `automations.yaml`.
 
-It resolves modern Home Assistant targets, checks dependency health, validates automation syntax, identifies Home Assistant 2026.7 migrations, and surfaces recent trace failures. All analysis runs locally inside Home Assistant; there is no telemetry or external data service.
+It resolves modern Home Assistant targets, checks dependency health, validates automation and script syntax, identifies Home Assistant 2026.7 migrations, and surfaces recent trace failures. All analysis runs locally inside Home Assistant; there is no telemetry or external data service.
 
 > [!IMPORTANT]
 > Version 1.0.0 is a breaking upgrade. It requires Home Assistant 2026.7.0 or newer, removes unauthenticated host-port access, and drops `armv7`. See [Migrating from 0.4.x](#migrating-from-04x).
@@ -31,6 +31,7 @@ _Screenshots use synthetic demo data; no Home Assistant instance data is include
 ## Highlights
 
 - **Complete automation config** — reads each loaded automation through the canonical `automation/config` WebSocket API instead of relying on state attributes.
+- **Script inspection** — reads loaded scripts through Home Assistant and checks their dependencies, actions, compatibility, and traces alongside automations.
 - **Current target model** — understands entity, device, area, floor, and label targets.
 - **Purpose-aware resolution** — filters resolved entities using the trigger, condition, or action target metadata Home Assistant itself publishes.
 - **Runtime-aware templates** — preserves templated target values as runtime-resolved metadata without reporting false missing entities.
@@ -122,6 +123,7 @@ One authenticated WebSocket connection batches:
 - entity, device, area, floor, and label registries;
 - entity integration sources and service descriptions;
 - loaded automation configurations;
+- loaded script configurations;
 - trigger and condition platform descriptions;
 - target extraction and config validation requests;
 - trace summaries and failed trace details.
@@ -130,7 +132,7 @@ One authenticated WebSocket connection batches:
 
 ## Report semantics
 
-An automation needs attention when one or more of these conditions apply:
+An automation or script needs attention when one or more of these conditions apply:
 
 - an entity reference is missing, unavailable, unknown, or disabled;
 - a device, area, floor, or label target no longer exists;
@@ -139,7 +141,7 @@ An automation needs attention when one or more of these conditions apply:
 - the latest stored run failed or contains template errors;
 - an entry exists in `automations.yaml` but did not load.
 
-“Unreferenced helpers” are cleanup candidates, not deletion instructions. A helper can still be used by scripts, dashboards, templates, integrations, or external clients.
+“Unreferenced helpers” are cleanup candidates, not deletion instructions. A helper can still be used by dashboards, templates, integrations, or external clients.
 
 ## HTTP API
 
