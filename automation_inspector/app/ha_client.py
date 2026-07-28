@@ -200,6 +200,8 @@ def _validation_request(config: Mapping[str, Any]) -> dict[str, Any] | None:
         value = config.get(plural, config.get(singular))
         if value is not None:
             request[plural] = value
+    if "actions" not in request and isinstance(config.get("sequence"), list):
+        request["actions"] = config["sequence"]
     return request if len(request) > 1 else None
 
 

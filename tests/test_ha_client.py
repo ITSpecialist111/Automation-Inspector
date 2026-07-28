@@ -7,7 +7,7 @@ from websockets.asyncio.server import ServerConnection, serve
 from websockets.exceptions import ConnectionClosed, WebSocketException
 
 import app.ha_client as ha_client_module
-from app.ha_client import HomeAssistantClient, HomeAssistantConnectionError
+from app.ha_client import HomeAssistantClient, HomeAssistantConnectionError, _validation_request
 from app.references import target_key
 from app.settings import Settings
 
@@ -287,3 +287,21 @@ async def test_proxy_502_is_reported_as_temporary_startup_failure(monkeypatch) -
 
     assert "retry automatically" in str(raised.value)
     assert calls == 3
+
+
+def test_validation_request_validates_script_sequences() -> None:
+    sequence = [{"action": "light.turn_on"}]
+
+    script_request = _validation_request({"alias": "x", "sequence": sequence})
+
+    assert script_request is not None
+    assert script_request["actions"] == sequence
+
+    automation_request = _validation_request(
+        {"alias": "x", "actions": [{"action": "light.turn_off"}], "sequence": sequence}
+    )
+
+    assert automation_request is not None
+    assert automation_request["actions"] == [{"action": "light.turn_off"}]
+
+    assert _validation_request({"alias": "x"}) is None
