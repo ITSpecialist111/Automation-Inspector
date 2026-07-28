@@ -197,6 +197,8 @@ def collect_entity_references(
         template_matches = set(TEMPLATE_ENTITY_RE.findall(value))
         for entity_id in template_matches:
             add(entity_id, "template")
+        if _is_template(value):
+            return
         explicit_key = key in ENTITY_VALUE_KEYS
         source = "template" if "{{" in value or "{%" in value else "configuration"
         for entity_id in ENTITY_ID_RE.findall(value):
