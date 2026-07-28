@@ -27,6 +27,25 @@ ENTITY_VALUE_KEYS = {
     "humidity_entity_id",
 }
 
+JINJA_CONTEXT_ROOTS = frozenset(
+    {
+        "config",
+        "context",
+        "item",
+        "loop",
+        "now",
+        "repeat",
+        "state",
+        "states",
+        "this",
+        "trigger",
+        "utcnow",
+        "value_json",
+        "variables",
+        "wait",
+    }
+)
+
 STANDARD_DOMAINS = frozenset(
     {
         "air_quality",
@@ -197,12 +216,15 @@ def collect_entity_references(
         template_matches = set(TEMPLATE_ENTITY_RE.findall(value))
         for entity_id in template_matches:
             add(entity_id, "template")
-        if _is_template(value):
-            return
-        explicit_key = key in ENTITY_VALUE_KEYS
-        source = "template" if "{{" in value or "{%" in value else "configuration"
+        templated = _is_template(value)
+        # A templated value is resolved by Home Assistant at runtime, so an
+        # entity-shaped key cannot vouch for the dotted tokens it contains.
+        explicit_key = key in ENTITY_VALUE_KEYS and not templated
+        source = "template" if templated else "configuration"
         for entity_id in ENTITY_ID_RE.findall(value):
             domain = entity_id.split(".", 1)[0]
+            if templated and domain in JINJA_CONTEXT_ROOTS:
+                continue
             if explicit_key or entity_id in template_matches or domain in domains:
                 add(entity_id, "explicit" if explicit_key else source)
 
