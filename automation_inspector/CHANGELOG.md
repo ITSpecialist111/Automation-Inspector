@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.1.0 — 2026-07-28
+
+### Added
+
+- Inspect scripts alongside automations, including their entity dependencies, target resolution, native validation, compatibility findings, and recent trace failures.
+- Report script totals in the API summary (`scripts`, `inspected_items`, `items_with_issues`) and list scripts in the dependency explorer with **Edit** and **Traces** links.
+
+### Fixed
+
+- Stop reporting event trigger `event_type` values such as `timer.finished` as missing entities; the referenced `event_data` entity is still tracked.
+- Stop scanning automation `description` prose for entity references, so notes about removed entities no longer create missing dependencies.
+- Stop reporting Jinja runtime context variables such as `trigger.entity_id`, `repeat.item`, and `repeat.item.boolean` as missing entities, while still detecting real entities referenced inside templates.
+- Stop listing duplicate `automations.yaml` entries produced by YAML anchors and aliases as phantom "not loaded" automations that inflated the automation count.
+
+### Changed
+
+- Unreferenced helper detection now also accounts for helpers used by scripts, reducing false cleanup suggestions.
+
 ## 1.0.2 — 2026-07-12
 
 ### Fixed
