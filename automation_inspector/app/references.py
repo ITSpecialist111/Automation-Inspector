@@ -189,7 +189,7 @@ def collect_entity_references(
         references.setdefault(entity_id, set()).add(source)
 
     def scan_string(value: str, key: str | None) -> None:
-        if key == "event_type":
+        if key in {"description", "event_type"}:
             return
         exact = ENTITY_ID_RE.fullmatch(value.strip())
         if exact and key in COMPONENT_KEYS:

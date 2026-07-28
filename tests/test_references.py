@@ -91,3 +91,15 @@ def test_ignores_event_type_but_keeps_event_entity_data() -> None:
     references = collect_entity_references(config, set())
 
     assert references == {"timer.test": {"explicit"}}
+
+
+def test_ignores_entity_like_values_in_description() -> None:
+    config = {
+        "description": "Removed binary_sensor.old_tracker and notify.send_message here.",
+        "triggers": [{"trigger": "state", "entity_id": "sensor.real_dependency"}],
+        "actions": [],
+    }
+
+    references = collect_entity_references(config, set())
+
+    assert references == {"sensor.real_dependency": {"explicit"}}
