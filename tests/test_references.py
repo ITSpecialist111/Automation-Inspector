@@ -138,3 +138,29 @@ def test_ignores_jinja_context_paths_but_keeps_literal_template_entities() -> No
         "input_boolean.window_pause": {"configuration"},
         "sensor.real_temperature": {"template"},
     }
+
+
+def test_keeps_template_entity_references_not_matched_by_helper_functions() -> None:
+    config = {
+        "conditions": [
+            {"condition": "template", "value_template": "{{ has_value('sensor.alpha') }}"},
+            {"condition": "template", "value_template": "{{ states.sensor.beta }}"},
+            {
+                "condition": "template",
+                "value_template": (
+                    "{% if is_state('binary_sensor.door','on') "
+                    "and has_value('sensor.temp') %}on{% endif %}"
+                ),
+            },
+        ],
+        "actions": [],
+    }
+
+    references = collect_entity_references(config, {"sensor", "binary_sensor"})
+
+    assert sorted(references) == [
+        "binary_sensor.door",
+        "sensor.alpha",
+        "sensor.beta",
+        "sensor.temp",
+    ]
