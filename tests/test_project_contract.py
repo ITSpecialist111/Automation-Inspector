@@ -47,8 +47,19 @@ def test_dashboard_uses_safe_dom_and_nonce_bootstrap() -> None:
 
 def test_container_is_non_root_and_health_checked() -> None:
     dockerfile = (APP / "Dockerfile").read_text(encoding="utf-8")
+    entrypoint = (APP / "docker-entrypoint.sh").read_text(encoding="utf-8")
 
     assert "FROM python:3.14.6-alpine3.24" in dockerfile
-    assert "USER inspector" in dockerfile
+    assert "adduser -S -D -H -G inspector inspector" in dockerfile
+    assert 'ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]' in dockerfile
+    assert "AI_OPTIONS_PATH=/tmp/options.json" in dockerfile
     assert "HEALTHCHECK" in dockerfile
     assert 'io.hass.type="app"' in dockerfile
+
+    # Supervisor writes /data/options.json as root with mode 0600, so the
+    # entrypoint must stage a readable copy before dropping privileges.
+    assert "/data/options.json" in entrypoint
+    assert "exec su-exec inspector:inspector" in entrypoint
+    # read_text normalizes newlines, so assert on raw bytes: CRLF would make
+    # the script unrunnable inside the Alpine container.
+    assert b"\r\n" not in (APP / "docker-entrypoint.sh").read_bytes()

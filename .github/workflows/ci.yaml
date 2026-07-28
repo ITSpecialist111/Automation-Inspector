@@ -87,4 +87,15 @@ jobs:
       - name: Verify image metadata
         run: |
           test "$(docker image inspect automation-inspector:ci --format '{{ index .Config.Labels "io.hass.type" }}')" = "app"
-          test "$(docker image inspect automation-inspector:ci --format '{{ .Config.User }}')" = "inspector"
+
+      - name: Verify the app drops to the unprivileged user
+        run: |
+          test "$(docker run --rm automation-inspector:ci id -un)" = "inspector"
+
+      - name: Verify Supervisor-owned options are readable after the privilege drop
+        run: |
+          docker volume create ai-ci-data
+          docker run --rm --entrypoint sh -v ai-ci-data:/data automation-inspector:ci -c \
+            'printf "{\"refresh_interval\": 987}" > /data/options.json && chown root:root /data/options.json && chmod 600 /data/options.json'
+          test "$(docker run --rm -v ai-ci-data:/data automation-inspector:ci python -c 'from app.settings import Settings; print(Settings.load().refresh_interval)')" = "987"
+          docker volume rm ai-ci-data

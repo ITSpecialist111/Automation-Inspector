@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1 — 2026-07-28
+
+### Fixed
+
+- Apply the configured App options again. Supervisor writes `/data/options.json` as root with mode `0600`, so the unprivileged container user could not read it and every option silently fell back to its built-in default. The container now stages a readable copy of the options and then drops privileges, so `refresh_interval`, `request_timeout`, `include_disabled`, `inspect_traces`, and `scan_automations_file` take effect.
+
 ## 1.1.0 — 2026-07-28
 
 ### Added

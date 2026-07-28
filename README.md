@@ -163,7 +163,7 @@ If a refresh fails after a successful run, the report remains available with the
 - No telemetry, analytics, CDN, remote font, or third-party JavaScript.
 - No Home Assistant write/service commands are issued.
 - Home Assistant configuration is mounted read-only.
-- The production container runs as an unprivileged user with `/tmp` on `tmpfs`.
+- The production container drops to an unprivileged user before starting the app, with `/tmp` on `tmpfs`.
 - Direct host-port publication was removed; access is through authenticated, admin-only Ingress.
 - The frontend uses a strict CSP with a per-response nonce and does not use `innerHTML`.
 - API responses use ETags, `nosniff`, a restrictive permissions policy, and no wildcard CORS.
