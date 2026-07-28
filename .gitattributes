@@ -1,0 +1,5 @@
+* text=auto eol=lf
+
+# Shell scripts run inside Linux containers and must never be checked out with
+# CRLF endings, which would make them unrunnable.
+*.sh text eol=lf

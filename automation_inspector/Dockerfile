@@ -17,19 +17,25 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 	PYTHONUNBUFFERED=1 \
 	PIP_DISABLE_PIP_VERSION_CHECK=1 \
 	PIP_NO_CACHE_DIR=1 \
+	AI_OPTIONS_PATH=/tmp/options.json \
 	HOME=/tmp
 
 WORKDIR /opt/automation-inspector
 
 COPY requirements.txt ./requirements.txt
 RUN python -m pip install --requirement requirements.txt \
+	&& apk add --no-cache su-exec \
 	&& addgroup -S inspector \
 	&& adduser -S -D -H -G inspector inspector
 
 COPY --chown=inspector:inspector app/ ./app/
 COPY --chown=inspector:inspector www/ ./www/
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod 0555 /usr/local/bin/docker-entrypoint.sh
 
-USER inspector
+# The entrypoint starts as root only to stage the Supervisor-owned options
+# file, then execs the application as the unprivileged inspector user.
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 EXPOSE 1234
 STOPSIGNAL SIGTERM
