@@ -1,4 +1,4 @@
-FROM python:3.14.6-alpine3.24
+FROM python:3.14.7-alpine3.24
 
 ARG BUILD_ARCH=unknown
 ARG BUILD_VERSION=dev
