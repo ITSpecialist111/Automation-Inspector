@@ -1,4 +1,5 @@
 fastapi==0.141.1
+Jinja2==3.1.6
 PyYAML==6.0.3
 uvicorn==0.52.4
 websockets==17.1

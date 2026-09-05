@@ -1,3 +1,5 @@
+import pytest
+
 from app.references import collect_entity_references, iter_target_uses
 
 
@@ -164,3 +166,61 @@ def test_keeps_template_entity_references_not_matched_by_helper_functions() -> N
         "sensor.beta",
         "sensor.temp",
     ]
+
+
+def test_script_field_metadata_is_not_a_dependency() -> None:
+    config = {
+        "fields": {
+            "counter_helper": {
+                "name": "Counter (**counter.fan_run_time_***)",
+                "example": "counter.fan_run_time_first_floor",
+                "default": "counter.real_default",
+                "selector": {"entity": {"filter": [{"integration": "counter"}]}},
+            },
+            "text_helper": {
+                "name": "Text_Input (**input_text.fan_run_time_***)",
+                "example": "input_text.fan_run_time_first_floor",
+            },
+        },
+        "sequence": [
+            {
+                "action": "script.process_fields",
+                "data": {"fields": {"entity_id": "sensor.runtime_field"}},
+            }
+        ],
+    }
+
+    references = collect_entity_references(config, set())
+
+    assert references == {
+        "counter.real_default": {"configuration"},
+        "sensor.runtime_field": {"explicit"},
+    }
+
+
+@pytest.mark.parametrize(
+    ("template", "expected"),
+    [
+        (
+            "{% set light = namespace(data={}) %}"
+            "{% set light.data = dict(light.data, transition=2) %}"
+            "{{ light.data }} {{ states('light.real') }} {{ states.light.other.state }}",
+            {"light.real", "light.other"},
+        ),
+        (
+            "{% for sensor in sensors %}{{ sensor.state }}{% endfor %}"
+            "{{ has_value('sensor.real') }} {{ states['sensor.other'] }}",
+            {"sensor.real", "sensor.other"},
+        ),
+        (
+            "{# sensor.not_a_dependency #}{{ 'notify.household' }}",
+            {"notify.household"},
+        ),
+    ],
+)
+def test_template_parser_distinguishes_local_variables_from_entities(
+    template: str, expected: set[str]
+) -> None:
+    references = collect_entity_references({"variables": {"result": template}}, set())
+
+    assert set(references) == expected

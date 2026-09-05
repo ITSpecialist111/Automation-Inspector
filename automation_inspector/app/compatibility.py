@@ -97,7 +97,8 @@ def inspect_compatibility(config: dict[str, Any]) -> list[dict[str, Any]]:
 
         options = value.get("options")
         if (
-            isinstance(value.get("target"), dict)
+            isinstance(trigger_value, str)
+            and isinstance(value.get("target"), dict)
             and isinstance(options, dict)
             and options.get("behavior") in {"any", "last"}
         ):
