@@ -9,22 +9,25 @@ It resolves modern Home Assistant targets, checks dependency health, validates a
 
 ## Screenshots
 
-### Health overview
+The redesigned interface includes separate automation, script, ignored-finding, and helper views, with searchable inspection results and light and dark themes.
 
-![Automation Inspector health overview showing automation, dependency, compatibility, target, and trace metrics](docs/images/dashboard-overview-light.png)
+### Desktop overview
 
-<table>
-  <tr>
-    <td width="68%" valign="top">
-      <strong>Expanded diagnostics</strong><br><br>
-      <img src="docs/images/dashboard-diagnostics-dark.png" alt="Expanded dark-mode automation diagnostics showing dependency health and configuration-bound ignore controls">
-    </td>
-    <td width="32%" valign="top">
-      <strong>Responsive mobile view</strong><br><br>
-      <img src="docs/images/dashboard-mobile.png" alt="Automation Inspector health overview on a mobile viewport">
-    </td>
-  </tr>
-</table>
+The overview combines health counters, filters, and expandable automation and script rows.
+
+![Light-theme desktop inspection overview with navigation, health counters, filters, and automation and script results](docs/images/dashboard-overview-light.png)
+
+### Dark-theme diagnostics
+
+Expand a row to inspect dependencies, compatibility findings, targets, and execution details. Individual dependency findings can be ignored until their configuration changes.
+
+![Dark-theme inspection with expanded dependency findings, ignore controls, compatibility guidance, and execution details](docs/images/dashboard-diagnostics-dark.png)
+
+### Mobile inspection
+
+Navigation, filters, and expanded findings remain available on narrow screens.
+
+<img src="docs/images/dashboard-mobile.png" alt="Mobile inspection showing responsive navigation, filters, and expanded dependency details" width="390">
 
 _Screenshots use synthetic demo data; no Home Assistant instance data is included._
 
