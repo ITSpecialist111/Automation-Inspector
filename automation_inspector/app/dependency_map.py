@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
@@ -369,10 +371,20 @@ def _analyze_automation(
             entity_attributes = {}
         registry = registry_map.get(entity_id, {})
         value, status = _entity_status(entity_id, state_map, registry_map)
+        entity_domain, service_name = entity_id.split(".", 1)
+        is_service = (
+            entity_id not in state_map
+            and entity_id not in registry_map
+            and references[entity_id] <= {"configuration", "template_value"}
+            and service_name in snapshot.service_descriptions.get(entity_domain, {})
+        )
+        if is_service:
+            value, status = "available", "ok"
         entities.append(
             {
                 "id": entity_id,
-                "domain": entity_id.split(".", 1)[0],
+                "domain": entity_domain,
+                "kind": "service" if is_service else "entity",
                 "name": (
                     entity_attributes.get("friendly_name")
                     or registry.get("name")
@@ -423,6 +435,13 @@ def _analyze_automation(
     friendly_name = (
         attributes.get("friendly_name") or primary_config.get("alias") or config_id or key
     )
+    config_hash = None
+    if configs and all(not source_key.startswith("attributes:") for source_key, _ in configs):
+        config_hash = hashlib.sha256(
+            json.dumps([config for _, config in configs], sort_keys=True, default=str).encode(
+                "utf-8"
+            )
+        ).hexdigest()
     return {
         "entity_id": key if loaded else None,
         "domain": domain,
@@ -432,6 +451,7 @@ def _analyze_automation(
         "loaded": loaded,
         "status": status,
         "config_id": config_id,
+        "config_hash": config_hash,
         "last_triggered": attributes.get("last_triggered"),
         "mode": primary_config.get("mode"),
         "source": "runtime" if loaded else "automations_file",
@@ -484,7 +504,7 @@ def build_inspection(snapshot: SourceSnapshot, settings: Settings) -> dict[str, 
         entity_id.split(".", 1)[0]
         for entity_id in set(state_map) | set(registry_map)
         if "." in entity_id
-    }
+    } | set(snapshot.service_descriptions)
     file_by_id: dict[str, list[FileAutomation]] = {}
     for automation in snapshot.file_automations:
         if automation.config_id:

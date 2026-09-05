@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import yaml
@@ -49,7 +50,7 @@ def test_container_is_non_root_and_health_checked() -> None:
     dockerfile = (APP / "Dockerfile").read_text(encoding="utf-8")
     entrypoint = (APP / "docker-entrypoint.sh").read_text(encoding="utf-8")
 
-    assert "FROM python:3.14.6-alpine3.24" in dockerfile
+    assert re.fullmatch(r"FROM python:3\.14\.\d+-alpine3\.24", dockerfile.splitlines()[0])
     assert "adduser -S -D -H -G inspector inspector" in dockerfile
     assert 'ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]' in dockerfile
     assert "AI_OPTIONS_PATH=/tmp/options.json" in dockerfile

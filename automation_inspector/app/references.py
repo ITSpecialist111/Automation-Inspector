@@ -8,11 +8,24 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from jinja2 import Environment, TemplateSyntaxError, nodes
+
 ENTITY_ID_RE = re.compile(r"(?<![a-z0-9_])([a-z_][a-z0-9_]*\.[a-z0-9_]+)(?![a-z0-9_.])")
 TEMPLATE_ENTITY_RE = re.compile(
-    r"(?:states|is_state|is_state_attr|state_attr|expand)\s*\(\s*['\"]"
+    r"(?:states|is_state|is_state_attr|state_attr|expand|has_value)\s*\(\s*['\"]"
     r"([a-z_][a-z0-9_]*\.[a-z0-9_]+)['\"]"
 )
+TEMPLATE_ENVIRONMENT = Environment(
+    autoescape=True, extensions=["jinja2.ext.loopcontrols", "jinja2.ext.do"]
+)
+TEMPLATE_ENTITY_FUNCTIONS = {
+    "states",
+    "is_state",
+    "is_state_attr",
+    "state_attr",
+    "expand",
+    "has_value",
+}
 
 TARGET_KEYS = ("entity_id", "device_id", "area_id", "floor_id", "label_id")
 COMPONENT_KEYS = {"trigger", "platform", "condition", "action", "service"}
@@ -26,25 +39,6 @@ ENTITY_VALUE_KEYS = {
     "temperature_entity_id",
     "humidity_entity_id",
 }
-
-JINJA_CONTEXT_ROOTS = frozenset(
-    {
-        "config",
-        "context",
-        "item",
-        "loop",
-        "now",
-        "repeat",
-        "state",
-        "states",
-        "this",
-        "trigger",
-        "utcnow",
-        "value_json",
-        "variables",
-        "wait",
-    }
-)
 
 STANDARD_DOMAINS = frozenset(
     {
@@ -132,6 +126,64 @@ def _is_template(value: str) -> bool:
     return any(marker in value for marker in ("{{", "{%", "{#"))
 
 
+def _template_state_entity(node: nodes.Node) -> str | None:
+    parts: list[str] = []
+    while isinstance(node, (nodes.Getattr, nodes.Getitem)):
+        if isinstance(node, nodes.Getattr):
+            parts.append(node.attr)
+        elif isinstance(node.arg, nodes.Const) and isinstance(node.arg.value, str):
+            parts.append(node.arg.value)
+        else:
+            return None
+        node = node.node
+    if not isinstance(node, nodes.Name) or node.name != "states":
+        return None
+    path = ".".join(reversed(parts)).split(".")
+    entity_id = ".".join(path[:2])
+    return entity_id if ENTITY_ID_RE.fullmatch(entity_id) else None
+
+
+def _template_references(value: str) -> tuple[set[str], set[str]]:
+    try:
+        template = TEMPLATE_ENVIRONMENT.parse(value)
+    except (TemplateSyntaxError, RecursionError):
+        explicit = set(TEMPLATE_ENTITY_RE.findall(value))
+        return explicit, explicit
+
+    candidates: set[str] = set()
+    explicit = set()
+    for literal in template.find_all((nodes.Const, nodes.TemplateData)):
+        text = literal.value if isinstance(literal, nodes.Const) else literal.as_const()
+        if isinstance(text, str):
+            candidates.update(ENTITY_ID_RE.findall(text))
+    for access in template.find_all((nodes.Getattr, nodes.Getitem)):
+        entity_id = _template_state_entity(access)
+        if entity_id:
+            explicit.add(entity_id)
+    for call in template.find_all(nodes.Call):
+        if isinstance(call.node, nodes.Name) and call.node.name in TEMPLATE_ENTITY_FUNCTIONS:
+            arguments = call.args if call.node.name == "expand" else call.args[:1]
+            for argument in arguments:
+                for constant in [argument, *argument.find_all(nodes.Const)]:
+                    if isinstance(constant, nodes.Const) and isinstance(constant.value, str):
+                        explicit.update(ENTITY_ID_RE.findall(constant.value))
+    return candidates | explicit, explicit
+
+
+def _runtime_config(config: dict[str, Any]) -> dict[str, Any]:
+    fields = config.get("fields")
+    if not isinstance(fields, dict):
+        return config
+    return {
+        **config,
+        "fields": {
+            name: {"default": field["default"]}
+            for name, field in fields.items()
+            if isinstance(field, dict) and "default" in field
+        },
+    }
+
+
 def _partition_target(
     target: dict[str, list[str]],
 ) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
@@ -193,7 +245,7 @@ def iter_target_uses(config: dict[str, Any]) -> list[TargetUse]:
             if key != "target":
                 walk(child, f"{path}.{key}")
 
-    walk(config, "$")
+    walk(_runtime_config(config), "$")
     return uses
 
 
@@ -213,20 +265,18 @@ def collect_entity_references(
         exact = ENTITY_ID_RE.fullmatch(value.strip())
         if exact and key in COMPONENT_KEYS:
             return
-        template_matches = set(TEMPLATE_ENTITY_RE.findall(value))
-        for entity_id in template_matches:
-            add(entity_id, "template")
         templated = _is_template(value)
-        # A templated value is resolved by Home Assistant at runtime, so an
-        # entity-shaped key cannot vouch for the dotted tokens it contains.
+        if templated:
+            candidates, explicit = _template_references(value)
+            for entity_id in candidates:
+                if entity_id in explicit or entity_id.split(".", 1)[0] in domains:
+                    add(entity_id, "template" if entity_id in explicit else "template_value")
+            return
         explicit_key = key in ENTITY_VALUE_KEYS and not templated
-        source = "template" if templated else "configuration"
         for entity_id in ENTITY_ID_RE.findall(value):
             domain = entity_id.split(".", 1)[0]
-            if templated and domain in JINJA_CONTEXT_ROOTS:
-                continue
-            if explicit_key or entity_id in template_matches or domain in domains:
-                add(entity_id, "explicit" if explicit_key else source)
+            if explicit_key or domain in domains:
+                add(entity_id, "explicit" if explicit_key else "configuration")
 
     def walk(value: Any, key: str | None = None) -> None:
         if isinstance(value, str):
@@ -240,7 +290,7 @@ def collect_entity_references(
             for child_key, child in value.items():
                 walk(child, str(child_key))
 
-    walk(config)
+    walk(_runtime_config(config))
     for target in iter_target_uses(config):
         for entity_id in target.target.get("entity_id", []):
             add(entity_id, f"{target.kind}_target")

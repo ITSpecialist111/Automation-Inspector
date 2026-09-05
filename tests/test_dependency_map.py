@@ -168,6 +168,94 @@ class FileAwareClient:
         )
 
 
+@pytest.mark.parametrize(
+    ("config", "expected_status", "expected_kind"),
+    [
+        ({"variables": {"notifiers": ["notify.household"]}}, "ok", "service"),
+        ({"variables": {"notifier": "{{ 'notify.household' }}"}}, "ok", "service"),
+        ({"entity_id": "notify.household"}, "missing", "entity"),
+        ({"target": {"entity_id": "notify.household"}}, "missing", "entity"),
+        ({"value_template": "{{ states('notify.household') }}"}, "missing", "entity"),
+    ],
+)
+def test_registered_services_do_not_mask_explicit_entity_dependencies(
+    config: dict, expected_status: str, expected_kind: str
+) -> None:
+    snapshot = SourceSnapshot(
+        states=[{"entity_id": "automation.notify", "state": "on", "attributes": {}}],
+        home_assistant_config={"version": "2026.8.3"},
+        automation_configs={"automation.notify": config},
+        service_descriptions={"notify": {"household": {"name": "Household"}}},
+    )
+
+    report = build_inspection(snapshot, Settings())
+
+    item = report["automations"]["automation.notify"]
+    assert item["entities"][0]["status"] == expected_status
+    assert item["entities"][0]["kind"] == expected_kind
+    assert item["issue_count"] == (0 if expected_status == "ok" else 1)
+
+
+def test_notify_repeat_values_use_service_registry_and_keep_missing_references() -> None:
+    snapshot = SourceSnapshot(
+        states=[{"entity_id": "automation.notify", "state": "on", "attributes": {}}],
+        home_assistant_config={"version": "2026.8.3"},
+        automation_configs={
+            "automation.notify": {
+                "actions": [
+                    {
+                        "repeat": {
+                            "for_each": [
+                                "notify.household",
+                                "notify.mobile_app_phone_1",
+                                "notify.missing",
+                            ],
+                            "sequence": [{"action": "{{ repeat.item }}"}],
+                        }
+                    }
+                ]
+            }
+        },
+        service_descriptions={"notify": {"household": {}, "mobile_app_phone_1": {}}},
+    )
+
+    report = build_inspection(snapshot, Settings())
+
+    entities = report["automations"]["automation.notify"]["entities"]
+    assert {entity["id"]: entity["status"] for entity in entities} == {
+        "notify.household": "ok",
+        "notify.mobile_app_phone_1": "ok",
+        "notify.missing": "missing",
+    }
+
+
+@pytest.mark.parametrize("domain", ["automation", "script"])
+def test_config_hash_changes_only_with_config_and_requires_available_config(domain: str) -> None:
+    entity_id = f"{domain}.demo"
+    config = {"alias": "Demo", "mode": "single"}
+    snapshot = SourceSnapshot(
+        states=[{"entity_id": entity_id, "state": "on", "attributes": {"id": "demo"}}],
+        home_assistant_config={"version": "2026.8.3"},
+    )
+    configs = getattr(snapshot, f"{domain}_configs")
+    configs[entity_id] = config
+
+    original = build_inspection(snapshot, Settings())[f"{domain}s"][entity_id]["config_hash"]
+    snapshot.states[0]["state"] = "off"
+    snapshot.states[0]["attributes"]["last_triggered"] = "2026-09-05T12:00:00Z"
+    configs[entity_id] = {"mode": "single", "alias": "Demo"}
+    unchanged = build_inspection(snapshot, Settings())[f"{domain}s"][entity_id]["config_hash"]
+    configs[entity_id]["mode"] = "parallel"
+    changed = build_inspection(snapshot, Settings())[f"{domain}s"][entity_id]["config_hash"]
+    configs.clear()
+    unavailable = build_inspection(snapshot, Settings())[f"{domain}s"][entity_id]["config_hash"]
+
+    assert isinstance(original, str) and len(original) == 64
+    assert unchanged == original
+    assert changed != original
+    assert unavailable is None
+
+
 @pytest.mark.anyio
 async def test_builder_scans_file_and_builds_report(tmp_path: Path) -> None:
     path = tmp_path / "automations.yaml"
