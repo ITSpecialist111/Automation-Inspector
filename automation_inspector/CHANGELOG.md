@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.2.0 - 2026-09-05
+
+### Added
+
+- Ignore and restore individual dependency findings until the automation or script configuration changes (#29). Ignores are scoped to the entity's failure status, so ignoring an unavailable sensor does not hide a later missing reference. Other validation and trace findings remain visible.
+- Dedicated automation, script, ignored-finding, and helper views, with consistent filtering and counters.
+- Repeatable desktop/mobile browser tests for navigation, filters, ignores, refresh recovery, caching, pagination, keyboard use, safe text rendering, responsive layouts, and light/dark accessibility. Browser and asset checks now gate container CI.
+
+### Fixed
+
+- Exclude script field labels, examples, and selector metadata from dependency analysis while preserving defaults and executable action data (#34).
+- Parse Jinja syntax without rendering templates. Namespace attributes, loop variables, and comments no longer create false missing entities, while quoted references and state-object access remain visible (#32).
+- Recognize registered services in configuration values and template literals, including legacy notify services, notify groups, and repeat lists. Explicit entity targets and state lookups still require real entities (#32, #33).
+- Restrict deprecated `behavior: any` to `each` guidance to triggers. Conditions using `any` or `all` no longer receive invalid migration advice (#33).
+- Correct explicit light-theme selection, preserve failure indicators while cached results remain visible, and restore normal empty-state text after recovery.
+- Allow Python patch updates in the container contract while retaining the required Python and Alpine series (#35).
+
+### Changed
+
+- Redesign the interface with MongoDB-inspired white surfaces, deep-teal navigation, green controls, flat expandable rows, self-hosted DM Sans and Source Code Pro fonts, and Lucide icons. No CDN or external runtime assets are used.
+- Update production Python to 3.14.7, FastAPI to 0.141.1, Uvicorn to 0.52.4, and websockets to 17.1. Add Jinja2 3.1.6 for syntax analysis (#35, #36).
+- Update setup-python to v7 and refresh development dependencies (#30, #36).
+- Keep API schema version 2 with additive `config_hash` and dependency `kind` fields. Template literals use the `template_value` reference source, distinct from explicit template entity lookups.
+
+### Upgrade Notes
+
+- Home Assistant 2026.7.0 or newer and authenticated Ingress remain required. No new App options or Home Assistant writes are introduced.
+- Ignores are stored in the current browser, are not shared between browsers, and do not alter the API report. If browser storage is blocked, changes last only for the current page session and the interface reports that limitation.
+- Browser tests use synthetic inspection data. The reported Home Assistant configurations are covered by regression tests, not a live Home Assistant validation run.
+
 ## 1.1.2 — 2026-07-28
 
 ### Changed

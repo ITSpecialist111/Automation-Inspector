@@ -17,7 +17,7 @@ It resolves modern Home Assistant targets, checks dependency health, validates a
   <tr>
     <td width="68%" valign="top">
       <strong>Expanded diagnostics</strong><br><br>
-      <img src="docs/images/dashboard-diagnostics-dark.png" alt="Expanded dark-mode automation diagnostics showing dependency health, a Home Assistant migration, target resolution, and trace errors">
+      <img src="docs/images/dashboard-diagnostics-dark.png" alt="Expanded dark-mode automation diagnostics showing dependency health and configuration-bound ignore controls">
     </td>
     <td width="32%" valign="top">
       <strong>Responsive mobile view</strong><br><br>
@@ -35,6 +35,8 @@ _Screenshots use synthetic demo data; no Home Assistant instance data is include
 - **Current target model** — understands entity, device, area, floor, and label targets.
 - **Purpose-aware resolution** — filters resolved entities using the trigger, condition, or action target metadata Home Assistant itself publishes.
 - **Runtime-aware templates** — preserves templated target values as runtime-resolved metadata without reporting false missing entities.
+- **Context-aware references** - parses Jinja without executing it, skips script field metadata, and distinguishes registered services from explicit entity references.
+- **Configuration-bound ignores** - ignore individual dependency findings in this browser until their configuration or failure status changes, with a dedicated restore view.
 - **Missing references remain visible** — reports missing, disabled, unavailable, and unknown entities instead of silently discarding them.
 - **Unloaded automation detection** — safely scans read-only `automations.yaml` so invalid UI-managed automations do not disappear from the report.
 - **Native validation** — sends triggers, conditions, and actions through Home Assistant's `validate_config` command.
@@ -96,7 +98,7 @@ Version 1.0 recognizes these removed names and suggests the current equivalent:
 | `climate.target_humidity` | `climate.is_target_humidity` |
 | `climate.target_temperature` | `climate.is_target_temperature` |
 
-It also flags deprecated target `options.behavior` values (`any` → `each`, `last` → `all`) and informational migrations from singular top-level keys to `triggers`, `conditions`, and `actions`.
+It also flags deprecated trigger `options.behavior` values (`any` to `each`, `last` to `all`). Condition behavior values `any` and `all` remain valid. Informational migrations cover singular top-level keys to `triggers`, `conditions`, and `actions`.
 
 ## How it works
 
@@ -143,6 +145,12 @@ An automation or script needs attention when one or more of these conditions app
 
 “Unreferenced helpers” are cleanup candidates, not deletion instructions. A helper can still be used by dashboards, templates, integrations, or external clients.
 
+### Ignoring known findings
+
+Expand an item and use the eye-off control beside a dependency finding. The **Ignored** view provides restore controls. An ignore applies only to that entity's current failure status and configuration, so a YAML configuration change or a different failure status makes the finding visible again.
+
+Ignores are browser-local and adjust dashboard counts and filters only. They do not change Home Assistant or the API report, and do not suppress unrelated validation or trace errors. When browser storage is blocked, the interface reports that changes last only for the current page session. Findings cannot be ignored when the source configuration is unavailable.
+
 ## HTTP API
 
 All report endpoints are intended to be reached through authenticated Ingress.
@@ -158,10 +166,13 @@ All report endpoints are intended to be reached through authenticated Ingress.
 
 If a refresh fails after a successful run, the report remains available with the `X-Automation-Inspector-Stale: true` response header.
 
+Version 1.2.0 retains schema 2 with additive fields. Each automation and script includes `config_hash`, a stable SHA-256 fingerprint of its parsed configuration, or `null` when only runtime attributes are available. Dependency rows include `kind` (`entity` or `service`). Registered service rows have `state: available` and `status: ok`. The `template_value` source denotes a template literal rather than an explicit entity lookup.
+
 ## Privacy and security
 
 - No telemetry, analytics, CDN, remote font, or third-party JavaScript.
 - No Home Assistant write/service commands are issued.
+- Theme preferences and ignored-finding IDs/configuration hashes are stored locally in the browser, not in Home Assistant configuration.
 - Home Assistant configuration is mounted read-only.
 - The production container drops to an unprivileged user before starting the app, with `/tmp` on `tmpfs`.
 - Direct host-port publication was removed; access is through authenticated, admin-only Ingress.
@@ -172,7 +183,7 @@ See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
 ## Local development
 
-Python 3.12 or newer and Node.js are sufficient for local checks. The production image uses Python 3.14.
+Python 3.12 or newer and Node.js 24 LTS are used for local checks. The production image uses Python 3.14.7. Browser tests run against a synthetic inspection server and need no Home Assistant credentials.
 
 ```bash
 python -m venv .venv
@@ -180,9 +191,16 @@ source .venv/bin/activate              # Windows: .venv\Scripts\activate
 python -m pip install -r requirements-dev.txt
 python -m pytest --cov
 python -m ruff check .
+python -m ruff format --check .
 python -m mypy
 node --check automation_inspector/www/app.js
+npm ci --ignore-scripts
+npx playwright install chromium
+npm test
+npm run test:ui
 ```
+
+After updating font or icon packages, run `npm run assets` and commit the regenerated files under `automation_inspector/www`. CI verifies those assets match the pinned packages and runs desktop/mobile accessibility and workflow checks before building the container.
 
 To connect the local server to Home Assistant, use an administrator long-lived access token:
 
@@ -199,7 +217,7 @@ Do not expose that development server to an untrusted network. It does not add a
 ```bash
 docker build \
   --build-arg BUILD_ARCH=amd64 \
-  --build-arg BUILD_VERSION=1.0.2 \
+  --build-arg BUILD_VERSION=1.2.0 \
   -t automation-inspector:dev \
   automation_inspector
 ```
@@ -245,7 +263,7 @@ The legacy `/dependency_map.json` URL remains available to ease custom-client mi
 - Blueprint analysis is limited to values present in the automation's stored blueprint inputs.
 - The unloaded-automation scan covers the standard UI-managed `automations.yaml`; arbitrary included YAML files are represented only when Home Assistant successfully loads them.
 - Recent trace diagnostics depend on Home Assistant retaining a trace for that automation.
-- Helper usage is evaluated only against inspected automations.
+- Helper usage is evaluated only against inspected automations and scripts.
 
 ## Contributing
 

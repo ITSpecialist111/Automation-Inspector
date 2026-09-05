@@ -25,7 +25,17 @@ Restart the App after changing options.
 - **Compatibility** — Home Assistant validation failed or the configuration uses a removed/deprecated construct.
 - **Trace failure** — the latest retained execution ended in an error or contains template errors.
 
-Select **Inspection details** to see dependency sources, target expansion, validation findings, replacements, and trace notes. **Edit** and **Traces** open the corresponding Home Assistant page.
+Select an automation or script row to expand dependency sources, target expansion, validation findings, replacements, and trace notes. The **Open configuration** and **View traces** icon controls open the corresponding Home Assistant page. Navigation separates automations, scripts, ignored findings, and unreferenced helpers.
+
+Registered services, including legacy notify services and notify groups, are shown as available when used as service values. Explicit entity targets and template state lookups still require real entities.
+
+## Ignoring known findings
+
+Use the eye-off control beside a dependency finding to ignore it for the current configuration. The **Ignored** view lists items with ignored findings and provides a restore control. Other validation and trace errors remain visible.
+
+An ignore is tied to the automation or script configuration, the entity ID, and its failure status. Editing the parsed configuration or changing the failure status makes the finding visible again. State updates and last-run timestamps alone do not reset it. Ignoring is disabled when the source configuration could not be retrieved.
+
+These choices are stored in the current browser, not Home Assistant, and do not change the API report. They are not shared across browsers. If browser storage is blocked, changes apply only for the current page session and the interface displays a warning. Clearing browser storage removes saved choices.
 
 ## Troubleshooting
 

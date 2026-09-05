@@ -7,5 +7,8 @@
 .venv/
 __pycache__/
 htmlcov/
+node_modules/
+playwright-report/
+test-results/
 *.log
 *.py[cod]

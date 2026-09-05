@@ -68,10 +68,58 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  browser:
+    name: Browser and accessibility checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --requirement requirements-dev.txt
+          npm ci --ignore-scripts
+
+      - name: Verify vendored assets
+        run: |
+          npm run assets
+          git diff --exit-code -- automation_inspector/www/fonts automation_inspector/www/icons automation_inspector/www/licenses
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Test finding ignore state
+        run: npm test
+
+      - name: Test dashboard workflows and accessibility
+        run: npm run test:ui
+
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-results
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
   container:
     name: Build production container
     runs-on: ubuntu-latest
-    needs: quality
+    needs: [quality, browser]
     steps:
       - name: Check out repository
         uses: actions/checkout@v7

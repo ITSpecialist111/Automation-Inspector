@@ -2,6 +2,7 @@
 
 const PAGE_SIZE = 50;
 const THEME_KEY = "automation-inspector-theme";
+const IGNORED_KEY = "automation-inspector-ignored-v1";
 const STATUS_LABELS = {
   enabled: "Enabled",
   disabled: "Disabled",
@@ -10,6 +11,7 @@ const STATUS_LABELS = {
   ok: "Healthy",
   missing: "Missing",
   unknown: "Unknown",
+  ignored: "Ignored",
 };
 
 const state = {
@@ -20,6 +22,10 @@ const state = {
   loading: false,
   displayLimit: PAGE_SIZE,
   toastTimer: null,
+  view: "all",
+  expanded: new Set(),
+  ignored: {},
+  error: null,
 };
 
 const element = (id) => document.getElementById(id);
@@ -38,6 +44,39 @@ function addText(parent, text, className) {
   const item = create("span", { className, text });
   parent.append(item);
   return item;
+}
+
+function icon(name, className = "") {
+  const item = create("span", { className: `icon icon-${name} ${className}`.trim() });
+  item.setAttribute("aria-hidden", "true");
+  return item;
+}
+
+function initializeIgnores() {
+  try {
+    state.ignored = InspectionState.parseIgnored(window.localStorage.getItem(IGNORED_KEY));
+  } catch (_error) {
+    state.ignored = {};
+  }
+}
+
+function toggleIgnored(key, info, entity) {
+  state.ignored = InspectionState.toggleIgnored(state.ignored, key, info, entity);
+  let persisted = true;
+  try {
+    window.localStorage.setItem(IGNORED_KEY, JSON.stringify(state.ignored));
+  } catch (_error) {
+    persisted = false;
+  }
+  renderPage();
+  const selector = `[data-item-key="${CSS.escape(key)}"] [data-ignore-entity="${CSS.escape(entity.id)}"]`;
+  (document.querySelector(selector) || element("search-input")).focus();
+  showToast(
+    persisted
+      ? (entity.ignored ? "Finding restored." : "Finding ignored for this configuration.")
+      : "Changed for this session only. Browser storage is unavailable.",
+    !persisted,
+  );
 }
 
 function safeDate(value) {
@@ -144,6 +183,7 @@ function updateThemeButton() {
     current === "dark" ? "Switch to light theme" : "Switch to dark theme",
   );
   button.title = current === "dark" ? "Use light theme" : "Use dark theme";
+  button.replaceChildren(icon(current === "dark" ? "sun" : "moon"));
 }
 
 function initializeTheme() {
@@ -187,11 +227,10 @@ function renderMetrics() {
   const summary = state.data?.summary || {};
   const itemCount = Number(summary.inspected_items || summary.automations || 0);
   const scriptCount = Number(summary.scripts || 0);
-  const unhealthyEntities =
-    Number(summary.missing_entities || 0) +
-    Number(summary.unavailable_entities || 0) +
-    Number(summary.unknown_entities || 0) +
-    Number(summary.disabled_entities || 0);
+  const items = inspectionItems().map(([, info]) => info);
+  const attentionCount = items.filter((info) => info.issue_count > 0).length;
+  const ignoredCount = items.reduce((total, info) => total + info.ignored_count, 0);
+  const unhealthyEntities = items.flatMap((info) => info.entities).filter((entity) => !entity.ok && !entity.ignored).length;
   metrics.append(
     metricCard(
       "Inspected items",
@@ -200,14 +239,14 @@ function renderMetrics() {
     ),
     metricCard(
       "Need attention",
-      summary.items_with_issues ?? summary.automations_with_issues,
-      `${summary.unloaded || 0} not loaded`,
-      (summary.items_with_issues ?? summary.automations_with_issues) ? "danger" : "",
+      attentionCount,
+      `${ignoredCount} ignored / ${summary.unloaded || 0} not loaded`,
+      attentionCount ? "danger" : "",
     ),
     metricCard(
-      "Dependency health",
+      "Dependency issues",
       unhealthyEntities,
-      `${summary.unique_entities || 0} unique entities checked`,
+      `${summary.unique_entities || 0} unique references`,
       unhealthyEntities ? "danger" : "",
     ),
     metricCard(
@@ -233,16 +272,11 @@ function renderMetrics() {
 
 function alertRow(message, tone = "warning") {
   const row = create("div", { className: `alert ${tone}` });
-  const symbol = create("span", {
-    text: tone === "error" ? "!" : "i",
-    className: "status-badge",
-  });
-  symbol.setAttribute("aria-hidden", "true");
-  row.append(symbol, create("span", { text: message }));
+  row.append(icon("circle-alert"), create("span", { text: message }));
   return row;
 }
 
-function renderAlerts(extraError = null) {
+function renderAlerts(extraError = state.error) {
   const stack = element("alert-stack");
   stack.replaceChildren();
   if (extraError) stack.append(alertRow(extraError, "error"));
@@ -261,7 +295,7 @@ function renderAlerts(extraError = null) {
   }
 }
 
-function updateConnection(error = null) {
+function updateConnection(error = state.error) {
   const dot = element("connection-dot");
   const label = element("connection-status");
   dot.classList.remove("connected", "error");
@@ -307,7 +341,36 @@ function inspectionItems() {
   return [
     ...Object.entries(state.data?.automations || {}),
     ...Object.entries(state.data?.scripts || {}),
-  ];
+  ].map(([key, info]) => [key, InspectionState.withIgnored(state.ignored, key, info)]);
+}
+
+function viewItems() {
+  return inspectionItems().filter(([, info]) => {
+    if (state.view === "all") return true;
+    if (state.view === "ignored") return info.ignored_count > 0;
+    return info.item_type === state.view;
+  });
+}
+
+function renderNavigation() {
+  const items = inspectionItems();
+  const counts = {
+    all: items.length,
+    automation: Object.keys(state.data?.automations || {}).length,
+    script: Object.keys(state.data?.scripts || {}).length,
+    ignored: items.reduce((total, [, info]) => total + info.ignored_count, 0),
+    helpers: (state.data?.unreferenced_helpers || []).length,
+  };
+  const countIds = { all: "all-count", automation: "automation-count", script: "script-count", ignored: "ignored-count", helpers: "nav-helper-count" };
+  document.querySelectorAll("[data-view]").forEach((button) => {
+    const active = button.dataset.view === state.view;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+    element(countIds[button.dataset.view]).textContent = String(counts[button.dataset.view]);
+  });
+  const titles = { all: "All items", automation: "Automations", script: "Scripts", ignored: "Ignored findings" };
+  element("automation-title").textContent = titles[state.view] || "All items";
+  element("workspace").classList.toggle("hidden", state.view === "helpers");
 }
 
 function daysSince(value) {
@@ -321,7 +384,7 @@ function filteredAutomations() {
   const run = element("run-filter").value;
   const issuesOnly = element("issues-only").checked;
   const sort = element("sort-filter").value;
-  const entries = inspectionItems().filter(([key, info]) => {
+  const entries = viewItems().filter(([key, info]) => {
     if (status !== "all" && info.status !== status) return false;
     if (issuesOnly && Number(info.issue_count || 0) === 0) return false;
     const age = daysSince(info.last_triggered);
@@ -348,85 +411,50 @@ function filteredAutomations() {
   return entries;
 }
 
-function entityLink(entity, preview = false) {
-  const url = homeAssistantUrl(
-    `/developer-tools/state?entity_id=${encodeURIComponent(entity.id)}`,
-  );
-  const chip = link("", url, `entity-chip${entity.ok ? "" : " problem"}`);
-  const id = create("span", { className: "entity-id", text: entity.id });
-  chip.append(id);
-  if (!preview) {
-    chip.append(create("span", { className: "entity-state", text: `· ${entity.state}` }));
-  }
-  chip.title = `${entity.name || entity.id}: ${entity.state}`;
-  return chip;
+function entityUrl(entity) {
+  return homeAssistantUrl(entity.kind === "service"
+    ? "/developer-tools/action"
+    : `/developer-tools/state?entity_id=${encodeURIComponent(entity.id)}`);
 }
 
 function automationHeader(key, info) {
-  const itemType = info.item_type === "script" ? "Script" : "Automation";
   const main = create("div", { className: "automation-main" });
-  const heading = create("div", { className: "automation-heading" });
-  heading.append(statusBadge(info.status));
   const title = create("div", { className: "automation-title-wrap" });
   title.append(
     create("h3", { className: "automation-title", text: info.friendly_name || key }),
     create("span", {
       className: "automation-id",
-      text: `${itemType} · ${info.entity_id || `YAML · ${info.config_id || key}`}`,
+      text: info.entity_id || `YAML / ${info.config_id || key}`,
     }),
   );
-  heading.append(title);
+  const status = create("div", { className: "automation-status" });
+  status.append(statusBadge(info.status));
+  const dependencies = create("span", { className: "row-cell dependency-count" });
+  addText(dependencies, (info.entities || []).length);
+  addText(dependencies, " deps", "cell-label");
+  const run = create("span", { className: "row-cell last-run", title: formatDate(info.last_triggered) });
+  addText(run, "Run: ", "cell-label");
+  addText(run, relativeTime(info.last_triggered));
+  const findings = create("div", { className: `finding-count${info.issue_count ? " has-findings" : ""}` });
+  addText(findings, info.issue_count ? `${info.issue_count} ${info.issue_count === 1 ? "issue" : "issues"}` : "Clear");
+  if (info.ignored_count) addText(findings, `${info.ignored_count} ignored`, "ignored-indicator");
+  main.append(title, status, dependencies, run, findings, icon("chevron-down", "row-chevron"));
+  return main;
+}
 
-  const meta = create("div", { className: "automation-meta" });
-  const run = create("span", {
-    className: "meta-item",
-    text: `Last run: ${relativeTime(info.last_triggered)}`,
-    title: formatDate(info.last_triggered),
-  });
-  meta.append(run);
-  if (info.mode) meta.append(create("span", { className: "meta-item", text: `Mode: ${info.mode}` }));
-  meta.append(
-    create("span", {
-      className: "meta-item",
-      text: `${(info.entities || []).length} dependencies`,
-    }),
-  );
-
-  const preview = create("div", { className: "entity-preview" });
-  const orderedEntities = [...(info.entities || [])].sort(
-    (left, right) => Number(left.ok) - Number(right.ok) || left.id.localeCompare(right.id),
-  );
-  orderedEntities.slice(0, 4).forEach((entity) => preview.append(entityLink(entity, true)));
-  if (orderedEntities.length > 4) {
-    preview.append(
-      create("span", {
-        className: "entity-chip more-chip",
-        text: `+${orderedEntities.length - 4} more`,
-      }),
-    );
-  }
-  if (orderedEntities.length === 0) {
-    preview.append(create("span", { className: "section-note", text: "No entity references found" }));
-  }
-
-  const actions = create("div", { className: "automation-actions" });
+function automationActions(key, info) {
+  const actions = create("div", { className: "automation-actions detail-actions" });
   if (info.loaded && info.config_id) {
     const domain = info.item_type === "script" ? "script" : "automation";
-    actions.append(
-      link(
-        "Edit",
-        homeAssistantUrl(`/config/${domain}/edit/${encodeURIComponent(info.config_id)}`),
-        "button button-secondary small-button",
-      ),
-      link(
-        "Traces",
-        homeAssistantUrl(`/config/${domain}/trace/${encodeURIComponent(info.config_id)}`),
-        "button button-ghost small-button",
-      ),
-    );
+    for (const [action, iconName, label] of [["edit", "external-link", "Open configuration"], ["trace", "activity", "View traces"]]) {
+      const anchor = link("", homeAssistantUrl(`/config/${domain}/${action}/${encodeURIComponent(info.config_id)}`), "button small-button");
+      anchor.title = `${label} for ${info.friendly_name || key}`;
+      anchor.setAttribute("aria-label", anchor.title);
+      anchor.append(icon(iconName));
+      actions.append(anchor);
+    }
   }
-  main.append(heading, meta, preview, actions);
-  return main;
+  return actions;
 }
 
 function detailPanel(title, className = "") {
@@ -435,7 +463,7 @@ function detailPanel(title, className = "") {
   return panel;
 }
 
-function dependenciesPanel(info) {
+function dependenciesPanel(key, info) {
   const panel = detailPanel("Dependencies");
   const list = create("ul", { className: "entity-list" });
   const entities = info.entities || [];
@@ -443,20 +471,33 @@ function dependenciesPanel(info) {
     list.append(create("li", { className: "section-note", text: "No direct or resolved entity dependencies." }));
   }
   entities.forEach((entity) => {
-    const row = create("li", { className: "entity-row" });
+    const row = create("li", { className: `entity-row${entity.ignored ? " ignored" : ""}` });
     const identity = create("div");
     identity.append(
       link(
         entity.id,
-        homeAssistantUrl(`/developer-tools/state?entity_id=${encodeURIComponent(entity.id)}`),
+        entityUrl(entity),
         "entity-id",
       ),
       create("span", {
         className: "entity-name",
-        text: `${entity.name || entity.id} · via ${(entity.sources || []).join(", ") || "configuration"}`,
+        text: `${entity.kind === "service" ? "Registered service" : entity.name || entity.id} / ${entity.state} / ${(entity.sources || []).map((source) => source.replaceAll("_", " ")).join(", ") || "configuration"}`,
       }),
     );
-    row.append(identity, statusBadge(entity.status));
+    const controls = create("div", { className: "entity-controls" });
+    controls.append(statusBadge(entity.ignored ? "ignored" : entity.status));
+    if (!entity.ok) {
+      const button = create("button", { className: "button small-button", title: entity.ignored ? "Restore finding" : "Ignore until this configuration changes" });
+      button.type = "button";
+      button.dataset.ignoreEntity = entity.id;
+      button.setAttribute("aria-label", `${entity.ignored ? "Restore" : "Ignore"} ${entity.status} finding for ${entity.id}`);
+      button.disabled = !info.config_hash;
+      if (button.disabled) button.title = "Configuration is unavailable. This finding cannot be ignored.";
+      button.append(icon(entity.ignored ? "undo-2" : "eye-off"));
+      button.addEventListener("click", () => toggleIgnored(key, info, entity));
+      controls.append(button);
+    }
+    row.append(identity, controls);
     list.append(row);
   });
   panel.append(list);
@@ -551,9 +592,10 @@ function targetsPanel(info) {
 }
 
 function diagnosticsPanel(info) {
-  if (!info.trace && !(info.warnings || []).length) return null;
+  if (!info.trace && !(info.warnings || []).length && !info.mode) return null;
   const panel = detailPanel("Recent execution & notes", "full-width");
   const list = create("ul", { className: "trace-list" });
+  if (info.mode) list.append(create("li", { className: "trace-line", text: `Mode: ${info.mode}` }));
   if (info.trace) {
     const hasError = Boolean(
       info.trace.error ||
@@ -580,8 +622,10 @@ function diagnosticsPanel(info) {
   return panel;
 }
 
-function renderDetailBody(body, info) {
-  body.append(dependenciesPanel(info));
+function renderDetailBody(body, key, info) {
+  const actions = automationActions(key, info);
+  if (actions.childElementCount) body.append(actions);
+  body.append(dependenciesPanel(key, info));
   [findingsPanel(info), targetsPanel(info), diagnosticsPanel(info)]
     .filter(Boolean)
     .forEach((panel) => body.append(panel));
@@ -591,20 +635,22 @@ function automationCard(key, info) {
   const card = create("article", {
     className: `automation-card${info.issue_count ? " has-issues" : ""}${info.loaded ? "" : " not-loaded"}`,
   });
-  card.append(automationHeader(key, info));
-
+  card.dataset.itemKey = key;
   const details = create("details", { className: "inspection-details" });
-  const summary = create("summary", {
-    className: "details-summary",
-    text:
-      `Inspection details · ${(info.entities || []).length} dependencies · ` +
-      `${(info.targets || []).length} targets · ${(info.compatibility_issues || []).length} checks`,
-  });
+  const summary = create("summary", { className: "details-summary" });
+  summary.append(automationHeader(key, info));
   const body = create("div", { className: "details-body" });
   details.append(summary, body);
+  if (state.expanded.has(key)) {
+    details.open = true;
+    renderDetailBody(body, key, info);
+    details.dataset.rendered = "true";
+  }
   details.addEventListener("toggle", () => {
+    if (details.open) state.expanded.add(key);
+    else state.expanded.delete(key);
     if (details.open && details.dataset.rendered !== "true") {
-      renderDetailBody(body, info);
+      renderDetailBody(body, key, info);
       details.dataset.rendered = "true";
     }
   });
@@ -621,11 +667,14 @@ function renderAutomations() {
   visible.forEach(([key, info]) => list.append(automationCard(key, info)));
 
   element("loading-state").classList.add("hidden");
+  element("empty-state").querySelector("h3").textContent = "No matching items";
+  element("empty-state").querySelector("p").textContent = "No results in this view.";
   element("empty-state").classList.toggle("hidden", entries.length !== 0);
+  document.querySelector(".list-columns").classList.toggle("hidden", entries.length === 0);
   const loadMoreRow = element("load-more-row");
   loadMoreRow.classList.toggle("hidden", visible.length >= entries.length);
   element("load-more").textContent = `Show ${Math.min(PAGE_SIZE, entries.length - visible.length)} more`;
-  const total = inspectionItems().length;
+  const total = viewItems().length;
   element("result-count").textContent =
     entries.length === total
       ? `${entries.length} items inspected`
@@ -635,7 +684,8 @@ function renderAutomations() {
 function renderHelpers() {
   const helpers = state.data?.unreferenced_helpers || [];
   const panel = element("helper-panel");
-  panel.classList.toggle("hidden", helpers.length === 0);
+  panel.classList.toggle("hidden", state.view !== "helpers");
+  element("helper-empty").classList.toggle("hidden", helpers.length !== 0);
   element("helper-count").textContent = String(helpers.length);
   const list = element("helper-list");
   list.replaceChildren();
@@ -663,6 +713,7 @@ function renderHelpers() {
 
 function renderPage() {
   if (!state.data) return;
+  renderNavigation();
   renderMetrics();
   renderAlerts();
   renderAutomations();
@@ -695,6 +746,7 @@ async function loadInspection(force = false) {
     if (state.etag && !force) headers.set("If-None-Match", state.etag);
     const response = await fetch(url, { cache: "no-cache", headers });
     if (response.status === 304) {
+      state.error = null;
       state.lastLoadedAt = new Date();
       state.stale = response.headers.get("X-Automation-Inspector-Stale") === "true";
       updateConnection();
@@ -715,6 +767,7 @@ async function loadInspection(force = false) {
     }
     if (!body.scripts || typeof body.scripts !== "object") body.scripts = {};
     state.data = body;
+    state.error = null;
     state.etag = response.headers.get("ETag");
     state.lastLoadedAt = new Date();
     state.stale = response.headers.get("X-Automation-Inspector-Stale") === "true";
@@ -723,6 +776,8 @@ async function loadInspection(force = false) {
     if (force) showToast("Inspection refreshed successfully.");
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to load the inspection.";
+    state.error = message;
+    if (state.data) state.stale = true;
     renderAlerts(message);
     updateConnection(message);
     showToast(message, true);
@@ -746,6 +801,13 @@ function resetFilters() {
 }
 
 function bindEvents() {
+  document.querySelectorAll("[data-view]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.view = button.dataset.view;
+      state.displayLimit = PAGE_SIZE;
+      renderPage();
+    });
+  });
   element("theme-button").addEventListener("click", toggleTheme);
   element("refresh-button").addEventListener("click", () => loadInspection(true));
   element("clear-filters").addEventListener("click", resetFilters);
@@ -764,6 +826,7 @@ function bindEvents() {
 }
 
 initializeTheme();
+initializeIgnores();
 bindEvents();
 loadInspection(false);
 window.setInterval(() => loadInspection(false), 60000);

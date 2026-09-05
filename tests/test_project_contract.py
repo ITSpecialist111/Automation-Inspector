@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -34,7 +35,10 @@ def test_home_assistant_app_manifest_is_ingress_only_and_current() -> None:
 
 def test_dashboard_uses_safe_dom_and_nonce_bootstrap() -> None:
     html = (APP / "www" / "index.html").read_text(encoding="utf-8")
-    javascript = (APP / "www" / "app.js").read_text(encoding="utf-8")
+    javascript = "\n".join(
+        (APP / "www" / filename).read_text(encoding="utf-8")
+        for filename in ("app.js", "inspection-state.js")
+    )
     css = (APP / "www" / "styles.css").read_text(encoding="utf-8")
 
     assert 'nonce="__CSP_NONCE__"' in html
@@ -42,8 +46,10 @@ def test_dashboard_uses_safe_dom_and_nonce_bootstrap() -> None:
     assert "innerHTML" not in javascript
     assert "insertAdjacentHTML" not in javascript
     assert "eval(" not in javascript
-    assert "--cp-bg: #f7f4ef;" in css
-    assert "--cp-accent: #b11f4b;" in css
+    assert 'src="static/inspection-state.js"' in html
+    assert "--cp-bg: #ffffff;" in css
+    assert "--cp-accent: #00684a;" in css
+    assert "--cp-button: #00ed64;" in css
 
 
 def test_container_is_non_root_and_health_checked() -> None:
@@ -64,3 +70,31 @@ def test_container_is_non_root_and_health_checked() -> None:
     # read_text normalizes newlines, so assert on raw bytes: CRLF would make
     # the script unrunnable inside the Alpine container.
     assert b"\r\n" not in (APP / "docker-entrypoint.sh").read_bytes()
+
+
+def test_browser_quality_gate_and_local_assets_are_available() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yaml").read_text(encoding="utf-8"))
+    package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+
+    assert set(workflow["jobs"]["container"]["needs"]) == {"quality", "browser"}
+    commands = "\n".join(step.get("run", "") for step in workflow["jobs"]["browser"]["steps"])
+    assert "npm run test:ui" in commands
+    assert "npm test" in commands
+    assert "git diff --exit-code" in commands
+    assert "@axe-core/playwright" in package["devDependencies"]
+    for asset in (
+        "fonts/dm-sans.woff2",
+        "fonts/source-code-pro.woff2",
+        "icons/workflow.svg",
+        "licenses/dm-sans.txt",
+        "licenses/source-code-pro.txt",
+        "licenses/lucide.txt",
+    ):
+        assert (APP / "www" / asset).stat().st_size > 0
+
+
+def test_latest_changelog_entry_matches_app_version() -> None:
+    changelog = (APP / "CHANGELOG.md").read_text(encoding="utf-8")
+    latest_heading = next(line for line in changelog.splitlines() if line.startswith("## "))
+
+    assert latest_heading.split()[1] == APP_VERSION

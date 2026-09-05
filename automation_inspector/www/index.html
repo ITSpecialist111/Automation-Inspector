@@ -4,162 +4,121 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="Inspect Home Assistant automation and script dependencies, targets, compatibility, and traces.">
+  <meta name="description" content="Home Assistant automation and script inspection.">
   <title>Automation Inspector</title>
   <script nonce="__CSP_NONCE__">
   (() => {
     const param = new URLSearchParams(window.location.search).get("scoutTheme");
-    const theme =
-      param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    let saved;
+    try { saved = window.localStorage.getItem("automation-inspector-theme"); } catch (_error) {}
+    const theme = [param, saved].find((value) => value === "light" || value === "dark")
+      || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
     document.documentElement.setAttribute("data-theme", theme);
   })();
   </script>
-  <link rel="icon" href="static/favicon.ico" sizes="any">
+  <link rel="icon" href="static/icons/workflow.svg" type="image/svg+xml">
+  <link rel="preload" href="static/fonts/dm-sans.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="static/styles.css">
+  <script src="static/inspection-state.js" defer></script>
   <script src="static/app.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to inspection results</a>
-
   <div class="app-shell">
     <header class="topbar">
       <div class="brand-group">
-        <div class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" focusable="false">
-            <path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6zM10 7h4M7 10v4M17 10v4M10 17h4"/>
-          </svg>
-        </div>
-        <div>
-          <p class="eyebrow">Home Assistant health workspace</p>
-          <h1>Automation Inspector</h1>
-          <p class="subtitle" id="instance-name">Connecting to Home Assistant…</p>
-        </div>
+        <span class="brand-mark icon icon-workflow" aria-hidden="true"></span>
+        <h1>Automation Inspector</h1>
+        <span class="environment-label">Home Assistant</span>
       </div>
       <div class="header-actions">
-        <button class="button button-secondary icon-button" id="theme-button" type="button" aria-label="Switch color theme">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9c0-.5-.04-1-.12-1.47A7 7 0 0 1 12 3Z"/></svg>
+        <span class="access-label"><span class="icon icon-shield-check" aria-hidden="true"></span>Read-only</span>
+        <button class="button icon-button theme-button" id="theme-button" type="button" aria-label="Switch color theme" title="Switch color theme">
+          <span class="icon icon-moon" aria-hidden="true"></span>
         </button>
-        <button class="button button-primary" id="refresh-button" type="button">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.4-2.5L20 9M4 15l2.5 2.5A7 7 0 0 0 17.9 15"/></svg>
-          <span>Run inspection</span>
+        <button class="button button-primary" id="refresh-button" type="button" aria-label="Run inspection" title="Run inspection">
+          <span class="icon icon-refresh-cw" aria-hidden="true"></span>
+          <span class="refresh-label">Run inspection</span>
         </button>
       </div>
     </header>
 
-    <div class="connection-strip" role="status" aria-live="polite">
-      <span class="status-dot" id="connection-dot" aria-hidden="true"></span>
-      <span id="connection-status">Preparing inspection…</span>
-      <span class="strip-separator" aria-hidden="true">·</span>
-      <span id="generated-time">Waiting for data</span>
-    </div>
+    <aside class="sidebar">
+      <p class="nav-label">Workspace</p>
+      <nav class="view-navigation" aria-label="Inspection views">
+        <button class="nav-item active" type="button" data-view="all" aria-pressed="true">
+          <span class="icon icon-layers" aria-hidden="true"></span><span>All items</span><span class="nav-count" id="all-count">0</span>
+        </button>
+        <button class="nav-item" type="button" data-view="automation" aria-pressed="false">
+          <span class="icon icon-workflow" aria-hidden="true"></span><span>Automations</span><span class="nav-count" id="automation-count">0</span>
+        </button>
+        <button class="nav-item" type="button" data-view="script" aria-pressed="false">
+          <span class="icon icon-square-terminal" aria-hidden="true"></span><span>Scripts</span><span class="nav-count" id="script-count">0</span>
+        </button>
+        <button class="nav-item" type="button" data-view="ignored" aria-pressed="false">
+          <span class="icon icon-eye-off" aria-hidden="true"></span><span>Ignored</span><span class="nav-count" id="ignored-count">0</span>
+        </button>
+        <button class="nav-item" type="button" data-view="helpers" aria-pressed="false">
+          <span class="icon icon-sliders-horizontal" aria-hidden="true"></span><span>Helpers</span><span class="nav-count" id="nav-helper-count">0</span>
+        </button>
+      </nav>
+      <div class="sidebar-footer"><span id="footer-version">Automation Inspector</span></div>
+    </aside>
 
-    <main id="main-content" tabindex="-1">
-      <section aria-labelledby="overview-title">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Current snapshot</p>
-            <h2 id="overview-title">Health overview</h2>
+    <main class="app-content" id="main-content" tabindex="-1">
+      <section class="overview" aria-labelledby="overview-title">
+        <div class="page-heading">
+          <div><h2 id="overview-title">Inspection overview</h2><p class="subtitle" id="instance-name">Connecting to Home Assistant...</p></div>
+          <div class="connection-strip" role="status" aria-live="polite">
+            <span class="connection-state"><span class="status-dot" id="connection-dot" aria-hidden="true"></span><span id="connection-status">Preparing inspection...</span></span>
+            <span id="generated-time">Waiting for data</span>
           </div>
-          <p class="section-note" id="version-note">Schema 2</p>
         </div>
         <div class="metrics-grid" id="metrics" aria-live="polite"></div>
       </section>
 
       <section class="alert-stack" id="alert-stack" aria-label="Inspection alerts" aria-live="polite"></section>
 
-      <section class="workspace" aria-labelledby="automation-title">
+      <section class="workspace" id="workspace" aria-labelledby="automation-title">
         <div class="workspace-heading">
-          <div>
-            <p class="eyebrow">Dependency explorer</p>
-            <h2 id="automation-title">Automations & scripts</h2>
-            <p class="section-note" id="result-count">Loading results…</p>
-          </div>
+          <h2 id="automation-title">All items</h2>
+          <p class="section-note" id="result-count">Loading results...</p>
         </div>
-
         <form class="filters" id="filter-form" role="search">
           <label class="search-field" for="search-input">
             <span class="visually-hidden">Search automations, scripts, and entities</span>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
-            <input id="search-input" type="search" autocomplete="off" placeholder="Search automation, script, entity, target, or issue…">
+            <span class="icon icon-search" aria-hidden="true"></span>
+            <input id="search-input" type="search" autocomplete="off" placeholder="Search name, entity or issue">
           </label>
-          <label class="field-label" for="status-filter">
-            <span>Status</span>
-            <select id="status-filter">
-              <option value="all">All statuses</option>
-              <option value="enabled">Enabled</option>
-              <option value="disabled">Disabled</option>
-              <option value="not_loaded">Not loaded</option>
-              <option value="unavailable">Unavailable</option>
-            </select>
+          <label class="field-label" for="status-filter"><span>Status</span>
+            <select id="status-filter"><option value="all">All statuses</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option><option value="not_loaded">Not loaded</option><option value="unavailable">Unavailable</option></select>
           </label>
-          <label class="field-label" for="run-filter">
-            <span>Last run</span>
-            <select id="run-filter">
-              <option value="all">Any time</option>
-              <option value="1">Past day</option>
-              <option value="7">Past 7 days</option>
-              <option value="30">Past 30 days</option>
-              <option value="never">Never</option>
-              <option value="older">Over 30 days</option>
-            </select>
+          <label class="field-label" for="run-filter"><span>Last run</span>
+            <select id="run-filter"><option value="all">Any time</option><option value="1">Past day</option><option value="7">Past 7 days</option><option value="30">Past 30 days</option><option value="never">Never</option><option value="older">Over 30 days</option></select>
           </label>
-          <label class="field-label" for="sort-filter">
-            <span>Sort</span>
-            <select id="sort-filter">
-              <option value="issues">Issues first</option>
-              <option value="name">Name</option>
-              <option value="recent">Most recent</option>
-              <option value="oldest">Least recent</option>
-            </select>
+          <label class="field-label" for="sort-filter"><span>Sort</span>
+            <select id="sort-filter"><option value="issues">Issues first</option><option value="name">Name</option><option value="recent">Most recent</option><option value="oldest">Least recent</option></select>
           </label>
-          <label class="toggle-label" for="issues-only">
-            <input id="issues-only" type="checkbox">
-            <span class="toggle" aria-hidden="true"></span>
-            <span>Issues only</span>
-          </label>
-          <button class="button button-ghost" id="clear-filters" type="button">Clear</button>
+          <label class="toggle-label" for="issues-only"><input id="issues-only" type="checkbox"><span>With issues</span></label>
+          <button class="button button-ghost icon-button" id="clear-filters" type="button" title="Reset filters" aria-label="Reset filters"><span class="icon icon-undo-2" aria-hidden="true"></span></button>
         </form>
 
-        <div class="loading-state" id="loading-state">
-          <span class="spinner" aria-hidden="true"></span>
-          <div>
-            <strong>Inspecting automations and scripts</strong>
-            <p>Resolving dependencies, targets, compatibility, and recent traces.</p>
-          </div>
-        </div>
-
-        <div class="empty-state hidden" id="empty-state">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"/></svg>
-          <h3>No matching items</h3>
-          <p>Change the filters or run a new inspection.</p>
-        </div>
-
+        <div class="loading-state" id="loading-state"><span class="spinner" aria-hidden="true"></span><strong>Loading inspection...</strong></div>
+        <div class="empty-state hidden" id="empty-state"><span class="icon icon-inbox" aria-hidden="true"></span><h3>No matching items</h3><p>No results in this view.</p></div>
+        <div class="list-columns" aria-hidden="true"><span>Name</span><span>Status</span><span>Dependencies</span><span>Last run</span><span>Findings</span><span></span></div>
         <div class="automation-list" id="automation-list"></div>
-
-        <div class="load-more-row hidden" id="load-more-row">
-          <button class="button button-secondary" id="load-more" type="button">Show more</button>
-        </div>
+        <div class="load-more-row hidden" id="load-more-row"><button class="button button-secondary" id="load-more" type="button">Show more</button></div>
       </section>
 
       <section class="helper-panel hidden" id="helper-panel" aria-labelledby="helper-title">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Cleanup candidates</p>
-            <h2 id="helper-title">Unreferenced helpers</h2>
-          </div>
-          <span class="count-badge" id="helper-count">0</span>
-        </div>
-        <p class="helper-intro">These helpers were not found in the inspected automations or scripts. Templates, dashboards, integrations, and external clients may still use them, so verify before deleting.</p>
+        <div class="workspace-heading"><h2 id="helper-title">Unreferenced helpers</h2><span class="count-badge" id="helper-count">0</span></div>
+        <p class="helper-intro">No references were found in the inspected automations or scripts. Dashboards, integrations, and external clients may still use these helpers. Verify before deleting.</p>
         <div class="helper-grid" id="helper-list"></div>
+        <p class="section-note hidden" id="helper-empty">No unreferenced helpers.</p>
       </section>
+      <footer class="main-footer"><span id="version-note">Schema 2</span></footer>
     </main>
-
-    <footer>
-      <span id="footer-version">Automation Inspector</span>
-      <span>Read-only analysis · data stays inside Home Assistant</span>
-    </footer>
   </div>
-
   <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
   <noscript><p class="noscript">Automation Inspector requires JavaScript to render the report.</p></noscript>
 </body>

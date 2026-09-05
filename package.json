@@ -1,0 +1,16 @@
+{
+  "name": "automation-inspector-ui",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/test_ui_state.cjs",
+    "test:ui": "playwright test",
+    "assets": "node tools/vendor-assets.mjs"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@fontsource-variable/dm-sans": "5.3.0",
+    "@fontsource-variable/source-code-pro": "5.3.0",
+    "@playwright/test": "1.63.0",
+    "lucide-static": "1.41.0"
+  }
+}

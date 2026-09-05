@@ -5,17 +5,22 @@ Contributions are welcome through focused issues and pull requests.
 ## Requirements
 
 - Python 3.12 or newer (production uses 3.14)
-- Node.js for JavaScript syntax checks
+- Node.js 24 LTS and Playwright Chromium for JavaScript and browser checks
 - Docker for container validation
 
-Install `requirements-dev.txt`, then run these checks before opening a pull request:
+Install `requirements-dev.txt`, run `npm ci --ignore-scripts` and `npx playwright install chromium`, then run these checks before opening a pull request:
 
 ```bash
 python -m ruff check .
+python -m ruff format --check .
 python -m mypy
 node --check automation_inspector/www/app.js
 python -m pytest --cov --cov-fail-under=75
+npm test
+npm run test:ui
 ```
+
+Browser tests use synthetic data through the real FastAPI application. They cover desktop/mobile workflows, local assets, light/dark accessibility, safe DOM rendering, and narrow-screen control sizing. After font or icon dependency updates, run `npm run assets` and include the regenerated assets and license files in the pull request.
 
 ## Design constraints
 
