@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.2.1 - 2026-09-07
+
+### Fixed
+
+- Use Home Assistant's script registry `unique_id` for configuration links and trace lookup. Renamed or suffixed entity IDs such as `script.example_2` no longer send users to the wrong editor or hide the script's retained trace (#38).
+- Count an unavailable automation or script as an issue even when it has no unhealthy dependencies. These items now remain visible in the **With issues** filter and are not labelled **Clear**.
+- Distinguish unavailable configuration from a verified absence of dependencies in the details panel.
+
+### Diagnostics
+
+- Show the Home Assistant state, configuration key, configuration source, and restored-placeholder flag in **Source & execution**.
+- Explain that an editable configuration is not proof that a script loaded successfully. Restored or unavailable items point users to Home Assistant Repairs and Core logs.
+- Keep separate Home Assistant entity IDs separate, even when names match. The Inspector does not rename, delete, merge, run, or repair scripts.
+
+### Compatibility
+
+- Keep schema version 2. Item fields `state`, `restored`, `configuration_available`, and `configuration_source` are additive. `configuration_source` is `runtime`, `automations_file`, or `attributes`.
+- Script configuration IDs now prefer the authoritative script registry entry. If it is unavailable, the existing attribute/entity-name fallback is retained, including literal numeric suffixes.
+- Configuration source describes the data used for analysis, not an inferred file path. The Inspector cannot determine which included YAML or package file holds a script, or reconstruct a previous editor save failure.
+- No new dependencies, App options, permissions, or Home Assistant writes.
+
 ## 1.2.0 - 2026-09-05
 
 ### Added

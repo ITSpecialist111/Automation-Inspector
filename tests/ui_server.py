@@ -164,17 +164,27 @@ class FixtureBuilder:
             ("movie_time", "Movie time"),
             ("announce", "Announce to household"),
         ]:
-            entity_id = f"script.{object_id}"
+            entity_id = (
+                f"script.{object_id}_2" if object_id == "good_night" else f"script.{object_id}"
+            )
+            restored = object_id == "movie_time"
+            snapshot.entity_registry.append(
+                {"entity_id": entity_id, "platform": "script", "unique_id": object_id}
+            )
             snapshot.states.append(
                 {
                     "entity_id": entity_id,
-                    "state": "off",
+                    "state": "unavailable" if restored else "off",
                     "attributes": {
                         "friendly_name": name,
                         "last_triggered": (now - timedelta(days=40)).isoformat(),
+                        "restored": restored,
                     },
                 }
             )
+            if restored:
+                snapshot.script_config_errors[entity_id] = "not_found: Entity not found"
+                continue
             snapshot.script_configs[entity_id] = {
                 "alias": name,
                 "mode": "single",

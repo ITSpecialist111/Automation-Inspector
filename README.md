@@ -171,6 +171,8 @@ If a refresh fails after a successful run, the report remains available with the
 
 Version 1.2.0 retains schema 2 with additive fields. Each automation and script includes `config_hash`, a stable SHA-256 fingerprint of its parsed configuration, or `null` when only runtime attributes are available. Dependency rows include `kind` (`entity` or `service`). Registered service rows have `state: available` and `status: ok`. The `template_value` source denotes a template literal rather than an explicit entity lookup.
 
+Version 1.2.1 adds item-level `state`, `restored`, `configuration_available`, and `configuration_source` (`runtime`, `automations_file`, or `attributes`). These appear under **Source & execution**. A script's `config_id` uses its registry unique ID when available, not necessarily the entity-name suffix. An unavailable item counts as a finding independently of its dependencies. See [script availability troubleshooting](automation_inspector/DOCS.md#unavailable-scripts-and-suffixed-entity-ids).
+
 ## Privacy and security
 
 - No telemetry, analytics, CDN, remote font, or third-party JavaScript.

@@ -468,7 +468,12 @@ function dependenciesPanel(key, info) {
   const list = create("ul", { className: "entity-list" });
   const entities = info.entities || [];
   if (!entities.length) {
-    list.append(create("li", { className: "section-note", text: "No direct or resolved entity dependencies." }));
+    list.append(create("li", {
+      className: "section-note",
+      text: info.configuration_available === false
+        ? "Dependencies could not be checked because the configuration was unavailable."
+        : "No direct or resolved entity dependencies.",
+    }));
   }
   entities.forEach((entity) => {
     const row = create("li", { className: `entity-row${entity.ignored ? " ignored" : ""}` });
@@ -592,9 +597,20 @@ function targetsPanel(info) {
 }
 
 function diagnosticsPanel(info) {
-  if (!info.trace && !(info.warnings || []).length && !info.mode) return null;
-  const panel = detailPanel("Recent execution & notes", "full-width");
+  if (!info.trace && !(info.warnings || []).length && !info.mode && !info.config_id && !info.state && !info.configuration_source) return null;
+  const panel = detailPanel("Source & execution", "full-width");
   const list = create("ul", { className: "trace-list" });
+  if (info.state) list.append(create("li", { className: "trace-line", text: `Home Assistant state: ${info.state}` }));
+  if (info.config_id) list.append(create("li", { className: "trace-line path", text: `Configuration key: ${info.config_id}` }));
+  const sourceLabels = {
+    runtime: "Home Assistant runtime configuration",
+    automations_file: "Read-only automations.yaml",
+    attributes: "State attributes only (configuration unavailable)",
+  };
+  if (Object.hasOwn(sourceLabels, info.configuration_source)) {
+    list.append(create("li", { className: "trace-line", text: `Source: ${sourceLabels[info.configuration_source]}` }));
+  }
+  if (info.restored === true) list.append(create("li", { className: "trace-line", text: "Restored placeholder: Yes" }));
   if (info.mode) list.append(create("li", { className: "trace-line", text: `Mode: ${info.mode}` }));
   if (info.trace) {
     const hasError = Boolean(

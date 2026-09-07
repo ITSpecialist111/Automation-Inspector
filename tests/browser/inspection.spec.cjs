@@ -88,6 +88,39 @@ test("theme parameters override saved and system preferences", async ({ page }) 
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 });
 
+test("script identity uses registry keys for configuration and trace links", async ({ page }) => {
+  await page.goto("/");
+  await page.locator('[data-view="script"]').click();
+  const script = page.locator('[data-item-key="script.good_night_2"]');
+  await script.locator("summary").click();
+  await expect(script.getByRole("link", { name: "Open configuration for Good night", exact: true })).toHaveAttribute("href", /\/config\/script\/edit\/good_night$/);
+  await expect(script.getByRole("link", { name: "View traces for Good night", exact: true })).toHaveAttribute("href", /\/config\/script\/trace\/good_night$/);
+  await expect(script.locator(".trace-list")).toContainText("Configuration key: good_night");
+  await expect(script.locator(".trace-list")).toContainText("Home Assistant state: off");
+  await expect(script.locator(".trace-list")).toContainText("Source: Home Assistant runtime configuration");
+  await expect(script.locator(".finding-count")).toHaveText("Clear");
+});
+
+test("restored scripts stay visible in the issues filter with source diagnostics", async ({ page }) => {
+  await page.goto("/");
+  await page.locator('[data-view="script"]').click();
+  await page.locator("#issues-only").check();
+  await expect(page.locator(".automation-card")).toHaveCount(1);
+  const script = page.locator('[data-item-key="script.movie_time"]');
+  await expect(script.locator(".finding-count")).toHaveText("1 issue");
+  await expect(script.locator(".automation-status")).toHaveText("Unavailable");
+  await script.locator("summary").click();
+  await expect(script.locator(".trace-list")).toContainText("Home Assistant state: unavailable");
+  await expect(script.locator(".trace-list")).toContainText("Configuration key: movie_time");
+  await expect(script.locator(".trace-list")).toContainText("Source: State attributes only (configuration unavailable)");
+  await expect(script.locator(".trace-list")).toContainText("Restored placeholder: Yes");
+  await expect(script.locator(".warning-row").filter({ hasText: "Check Repairs" })).toBeVisible();
+  await expect(script.locator(".entity-list")).toContainText("Dependencies could not be checked");
+  await expect(script.getByRole("button", { name: /^Ignore / })).toHaveCount(0);
+  const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
+  expect(results.violations).toEqual([]);
+});
+
 test("configuration edits automatically restore ignored findings", async ({ page }) => {
   await page.goto("/");
   await ignoreLaundry(page);

@@ -11,6 +11,123 @@ from app.references import target_key
 from app.settings import Settings
 
 
+def test_script_registry_identity_drives_editor_and_trace_ids() -> None:
+    entity_id = "script.turn_off_light_left_on_2"
+    config_id = "turn_off_light_left_on"
+    snapshot = SourceSnapshot(
+        states=[{"entity_id": entity_id, "state": "off", "attributes": {"id": "old-id"}}],
+        home_assistant_config={"version": "2026.9.0"},
+        entity_registry=[{"entity_id": entity_id, "platform": "script", "unique_id": config_id}],
+        script_configs={entity_id: {"alias": "Turn off light", "sequence": []}},
+        traces=[
+            {
+                "domain": "script",
+                "item_id": config_id,
+                "run_id": "registry-script-run",
+                "timestamp": {"start": "2026-09-07T10:00:00+00:00"},
+                "script_execution": "finished",
+            }
+        ],
+    )
+
+    item = build_inspection(snapshot, Settings())["scripts"][entity_id]
+
+    assert item["config_id"] == config_id
+    assert item["trace"]["run_id"] == "registry-script-run"
+    assert item["status"] == "enabled"
+    assert item["state"] == "off"
+    assert item["configuration_source"] == "runtime"
+    assert item["configuration_available"] is True
+    assert item["restored"] is False
+    assert item["issue_count"] == 0
+
+
+@pytest.mark.parametrize(
+    "registry",
+    [
+        {},
+        {"platform": "script", "unique_id": None},
+        {"platform": "script", "unique_id": ""},
+        {"platform": "other", "unique_id": "different-platform-key"},
+    ],
+)
+def test_script_without_registry_identity_keeps_its_literal_suffix(registry: dict) -> None:
+    entity_id = "script.original_name_2"
+    snapshot = SourceSnapshot(
+        states=[{"entity_id": entity_id, "state": "off", "attributes": {}}],
+        home_assistant_config={"version": "2026.9.0"},
+        entity_registry=[{"entity_id": entity_id, **registry}],
+        script_configs={entity_id: {"sequence": []}},
+    )
+
+    item = build_inspection(snapshot, Settings())["scripts"][entity_id]
+
+    assert item["config_id"] == "original_name_2"
+
+
+@pytest.mark.parametrize("domain", ["automation", "script"])
+def test_unavailable_items_are_findings_without_dependency_errors(domain: str) -> None:
+    entity_id = f"{domain}.unavailable_item"
+    snapshot = SourceSnapshot(
+        states=[{"entity_id": entity_id, "state": "unavailable", "attributes": {}}],
+        home_assistant_config={"version": "2026.9.0"},
+        automation_configs={entity_id: {"triggers": [], "actions": []}},
+        script_configs={entity_id: {"sequence": []}},
+    )
+
+    report = build_inspection(snapshot, Settings())
+    item = report[f"{domain}s"][entity_id]
+
+    assert item["status"] == "unavailable"
+    assert item["issue_count"] == 1
+    assert item["state"] == "unavailable"
+    assert item["configuration_available"] is True
+    assert "does not prove that it loaded successfully" in " ".join(item["warnings"])
+    assert report["summary"]["items_with_issues"] == 1
+
+
+def test_restored_and_active_scripts_with_same_name_remain_distinct() -> None:
+    stale_id = "script.turn_off_light_left_on"
+    active_id = "script.turn_off_light_left_on_2"
+    snapshot = SourceSnapshot(
+        states=[
+            {
+                "entity_id": stale_id,
+                "state": "unavailable",
+                "attributes": {"friendly_name": "Turn off light", "restored": True},
+            },
+            {
+                "entity_id": active_id,
+                "state": "off",
+                "attributes": {"friendly_name": "Turn off light"},
+            },
+        ],
+        home_assistant_config={"version": "2026.9.0"},
+        entity_registry=[
+            {"entity_id": stale_id, "platform": "script", "unique_id": "old-script"},
+            {"entity_id": active_id, "platform": "script", "unique_id": "current-script"},
+        ],
+        script_configs={active_id: {"alias": "Turn off light", "sequence": []}},
+        script_config_errors={stale_id: "not_found: Entity not found"},
+    )
+
+    report = build_inspection(snapshot, Settings())
+    stale, active = (report["scripts"][entity_id] for entity_id in (stale_id, active_id))
+
+    assert report["summary"]["scripts"] == 2
+    assert report["summary"]["scripts_with_issues"] == 1
+    assert stale["restored"] is True
+    assert stale["configuration_available"] is False
+    assert stale["configuration_source"] == "attributes"
+    assert stale["config_hash"] is None
+    assert any("restored placeholder" in warning for warning in stale["warnings"])
+    assert "not_found: Entity not found" in stale["warnings"]
+    assert active["restored"] is False
+    assert active["configuration_source"] == "runtime"
+    assert active["config_id"] == "current-script"
+    assert active["issue_count"] == 0
+
+
 def test_build_inspection_handles_targets_missing_entities_and_unloaded_yaml() -> None:
     runtime_config = {
         "id": "runtime-id",

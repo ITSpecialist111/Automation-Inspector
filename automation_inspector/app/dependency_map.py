@@ -424,11 +424,32 @@ def _analyze_automation(
         status = "disabled"
 
     primary_config = configs[0][1] if configs else {}
+    restored = attributes.get("restored") is True
+    configuration_available = bool(configs) and all(
+        not source_key.startswith("attributes:") for source_key, _ in configs
+    )
+    configuration_source = "attributes"
+    if configuration_available:
+        configuration_source = (
+            "runtime" if configs[0][0].startswith("runtime:") else "automations_file"
+        )
     warnings: list[str] = []
     if loaded and key in snapshot.automation_config_errors:
         warnings.append(snapshot.automation_config_errors[key])
     if loaded and domain == "script" and key in snapshot.script_config_errors:
         warnings.append(snapshot.script_config_errors[key])
+    if restored:
+        warnings.append(
+            f"Home Assistant marks this {domain} as a restored placeholder. "
+            "Its state entry does not confirm that the integration loaded it. "
+            "Check Repairs and Home Assistant Core logs before changing or deleting it."
+        )
+    elif status == "unavailable":
+        warnings.append(
+            f"Home Assistant reports this {domain} as unavailable. "
+            "An editable configuration does not prove that it loaded successfully. "
+            "Check Repairs and Home Assistant Core logs."
+        )
     if "use_blueprint" in primary_config:
         warnings.append("Blueprint analysis is limited to its configured inputs.")
 
@@ -436,7 +457,7 @@ def _analyze_automation(
         attributes.get("friendly_name") or primary_config.get("alias") or config_id or key
     )
     config_hash = None
-    if configs and all(not source_key.startswith("attributes:") for source_key, _ in configs):
+    if configuration_available:
         config_hash = hashlib.sha256(
             json.dumps([config for _, config in configs], sort_keys=True, default=str).encode(
                 "utf-8"
@@ -450,8 +471,12 @@ def _analyze_automation(
         "enabled": status == "enabled",
         "loaded": loaded,
         "status": status,
+        "state": state_value,
+        "restored": restored,
         "config_id": config_id,
         "config_hash": config_hash,
+        "configuration_available": configuration_available,
+        "configuration_source": configuration_source,
         "last_triggered": attributes.get("last_triggered"),
         "mode": primary_config.get("mode"),
         "source": "runtime" if loaded else "automations_file",
@@ -460,7 +485,12 @@ def _analyze_automation(
         "compatibility_issues": compatibility,
         "trace": trace,
         "warnings": warnings,
-        "issue_count": bad_entities + compatibility_errors + int(trace_is_issue) + int(not loaded),
+        "issue_count": (
+            bad_entities
+            + compatibility_errors
+            + int(trace_is_issue)
+            + int(status in {"not_loaded", "unavailable"})
+        ),
     }
 
 
@@ -562,7 +592,10 @@ def build_inspection(snapshot: SourceSnapshot, settings: Settings) -> dict[str, 
         attributes = state.get("attributes", {})
         if not isinstance(attributes, dict):
             attributes = {}
-        raw_config_id = attributes.get("id") or entity_id.split(".", 1)[1]
+        registry = registry_map.get(entity_id, {})
+        raw_config_id = registry.get("unique_id") if registry.get("platform") == "script" else None
+        if not isinstance(raw_config_id, str) or not raw_config_id:
+            raw_config_id = attributes.get("id") or entity_id.split(".", 1)[1]
         config_id = str(raw_config_id) if raw_config_id is not None else None
         runtime_config = snapshot.script_configs.get(entity_id)
 

@@ -49,6 +49,16 @@ An HTTP 502 from the Supervisor WebSocket proxy means Supervisor could not reach
 
 The current refresh failed, but an older successful report remains visible. The banner and API status identify this state. Check Home Assistant connectivity and run another inspection.
 
+### Unavailable scripts and suffixed entity IDs
+
+Script status comes from Home Assistant's state machine. Opening a script in the editor only confirms that a configuration can be edited, not that the script loaded or can run. An unavailable item remains a finding even when no dependency errors were detected.
+
+Expand **Source & execution** to compare the Home Assistant state, configuration key, configuration source, and restored-placeholder flag. A restored placeholder is an entity state retained by Home Assistant without confirmation that its integration loaded it. Check **Settings > System > Repairs** and Core logs before changing or deleting it.
+
+The entity ID and configuration key can differ after a rename or naming collision. From 1.2.1, script editor and trace links use the script registry's unique ID when available. Two entities with similar names are still two separate Home Assistant state entries; the Inspector does not merge them or strip `_2` suffixes.
+
+Scripts defined in included YAML files or packages can be inspected through Home Assistant's runtime configuration, but Home Assistant's script editor only edits scripts managed in `scripts.yaml`. Runtime configuration retrieval does not identify the underlying YAML file. The Inspector cannot determine where a failed editor save went or whether it created a duplicate.
+
 ### High resource usage
 
 Increase `refresh_interval`, disable recent trace inspection, or disable the `automations.yaml` scan. Manual refreshes are coalesced, so repeated clicks do not create parallel scans.
