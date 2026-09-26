@@ -25,9 +25,11 @@ Restart the App after changing options.
 - **Compatibility** — Home Assistant validation failed or the configuration uses a removed/deprecated construct.
 - **Trace failure** — the latest retained execution ended in an error or contains template errors.
 
-Select an automation or script row to expand dependency sources, target expansion, validation findings, replacements, and trace notes. The **Open configuration** and **View traces** icon controls open the corresponding Home Assistant page. Navigation separates automations, scripts, ignored findings, and unreferenced helpers.
+Select an automation or script row to expand dependency sources, target expansion, validation findings, replacements, and trace notes. The **Open configuration** and **View traces** icon controls open the corresponding Home Assistant page. Navigation separates automations, scripts, ignored findings, and unreferenced helpers. The overview counters summarize the selected view.
 
 Registered services, including legacy notify services and notify groups, are shown as available when used as service values. Explicit entity targets and template state lookups still require real entities.
+
+Action targets using `entity_id: all` or `entity_id: none` appear as **Entities** chips and do not add dependencies. Entity registry IDs in targets are resolved to their entity IDs; an unknown registry ID is reported as **Missing**.
 
 ## Ignoring known findings
 
@@ -44,6 +46,8 @@ These choices are stored in the current browser, not Home Assistant, and do not 
 Home Assistant may still be starting, or its WebSocket API may be unavailable. Check the App log and wait for an automatic retry. `/ready` returns 503 until the first successful snapshot.
 
 An HTTP 502 from the Supervisor WebSocket proxy means Supervisor could not reach the Home Assistant Core API at that moment. Automation Inspector retries every 10 seconds until it succeeds. If the error persists after Home Assistant has fully started, restart Home Assistant and then restart the App; persistent 502 responses indicate a Core/Supervisor connectivity problem rather than an automation configuration problem.
+
+A Python error name such as `ValueError` or `TypeError`, rather than a connection message, indicates an Automation Inspector defect. From 1.2.2, an error while analyzing one automation or script affects only that item, which shows an `analysis_failed` finding. Please [open an issue](https://github.com/ITSpecialist111/Automation-Inspector/issues) and include the App log, which records the traceback.
 
 ### Last-known-good inspection
 

@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.2.2 - 2026-09-26
+
+### Fixed
+
+- Fix **Inspection unavailable** with `ValueError: not enough values to unpack (expected 2, got 1)` in 1.2.0 and 1.2.1. A single action target using `entity_id: all`, `entity_id: none`, or an entity registry ID stopped the entire inspection (#39).
+- Interpret target entity selectors as Home Assistant does. `all` and `none` are not dependencies, entity registry IDs resolve through the entity registry, and comma-separated or mixed-case entity IDs resolve to their entities instead of false **Missing** findings. An unknown registry ID is reported as a missing dependency because Home Assistant rejects it when the action runs.
+- Match entity IDs in explicit entity fields case-insensitively, as Home Assistant does, including in triggers and conditions. A value such as `Light.kitchen` no longer produces a truncated `ight.kitchen` **Missing** finding.
+- Send only valid entity IDs to Home Assistant's `extract_from_target` command. Device, area, floor, and label selectors that share a target with `all` or a registry ID now resolve instead of producing a **Target resolution failed** warning. A `none` device, area, floor, or label selector no longer appears as a missing target.
+- Keep the report available when `automations.yaml` contains YAML-only values, such as an unquoted date alias, a date or time in action data, or mixed key types. Previously these could make every inspection fail with a `TypeError`.
+
+### Changed
+
+- Make the overview counters follow the selected view. **Automations**, **Scripts**, and **Ignored** count only those items; **Helpers** shows unreferenced, referenced, healthy, unhealthy, and disabled helpers and the most common helper types (#40).
+- Show `all` and `none` entity selectors as **Entities** chips in the Targets panel.
+
+### Diagnostics
+
+- Limit an unexpected analysis error to the affected automation or script. The item stays listed with an `analysis_failed` finding, other items are inspected normally, and a warning asks for a report with the App log.
+- Log a full traceback once for each new unexpected inspection failure. Home Assistant connection errors are still logged as single-line warnings.
+
+### Compatibility
+
+- Keep schema version 2. Additive fields: `summary.helpers` (total helper entities), target `entity_match` (`all`, `none`, or `null`), and the `analysis_failed` finding code. Dependency rows for unknown entity registry IDs have `domain: null`.
+- Represent YAML-only values from `automations.yaml` as Home Assistant's API returns runtime configurations: dates and times become ISO strings, and non-string keys become strings. Configuration fingerprints are unchanged except for entries containing YAML datetimes or several numeric keys, whose ignored findings reappear once.
+- No new dependencies, App options, permissions, or Home Assistant writes.
+
 ## 1.2.1 - 2026-09-07
 
 ### Fixed

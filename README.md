@@ -35,7 +35,7 @@ _Screenshots use synthetic demo data; no Home Assistant instance data is include
 
 - **Complete automation config** — reads each loaded automation through the canonical `automation/config` WebSocket API instead of relying on state attributes.
 - **Script inspection** — reads loaded scripts through Home Assistant and checks their dependencies, actions, compatibility, and traces alongside automations.
-- **Current target model** — understands entity, device, area, floor, and label targets.
+- **Current target model** — understands entity, device, area, floor, and label targets, including Home Assistant's `all`/`none` entity selectors and entity registry IDs.
 - **Purpose-aware resolution** — filters resolved entities using the trigger, condition, or action target metadata Home Assistant itself publishes.
 - **Runtime-aware templates** — preserves templated target values as runtime-resolved metadata without reporting false missing entities.
 - **Context-aware references** - parses Jinja without executing it, skips script field metadata, and distinguishes registered services from explicit entity references.
@@ -172,6 +172,8 @@ If a refresh fails after a successful run, the report remains available with the
 Version 1.2.0 retains schema 2 with additive fields. Each automation and script includes `config_hash`, a stable SHA-256 fingerprint of its parsed configuration, or `null` when only runtime attributes are available. Dependency rows include `kind` (`entity` or `service`). Registered service rows have `state: available` and `status: ok`. The `template_value` source denotes a template literal rather than an explicit entity lookup.
 
 Version 1.2.1 adds item-level `state`, `restored`, `configuration_available`, and `configuration_source` (`runtime`, `automations_file`, or `attributes`). These appear under **Source & execution**. A script's `config_id` uses its registry unique ID when available, not necessarily the entity-name suffix. An unavailable item counts as a finding independently of its dependencies. See [script availability troubleshooting](automation_inspector/DOCS.md#unavailable-scripts-and-suffixed-entity-ids).
+
+Version 1.2.2 adds `summary.helpers`, the total number of helper entities, and a target-level `entity_match` that is `all` or `none` when a target uses Home Assistant's special entity selectors, otherwise `null`. Target entity IDs follow Home Assistant's action schema: comma-separated and mixed-case IDs are normalized, and entity registry IDs resolve through the entity registry. An unknown registry ID is reported as a missing dependency with `domain: null`. If one item cannot be analyzed, it carries an `analysis_failed` finding and the rest of the report is still produced.
 
 ## Privacy and security
 
