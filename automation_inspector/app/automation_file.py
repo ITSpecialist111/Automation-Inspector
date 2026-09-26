@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -37,6 +39,34 @@ def _load_yaml(text: str) -> Any:
         return loader.get_single_data()
     finally:
         loader.dispose()
+
+
+def _json_key(key: Any) -> str:
+    if isinstance(key, str):
+        return key
+    if isinstance(key, (datetime.date, datetime.time)):
+        return key.isoformat()
+    return json.dumps(key) if key is None or isinstance(key, (bool, int, float)) else str(key)
+
+
+def _json_compatible(value: Any) -> Any:
+    """Represent YAML-only types as Home Assistant's JSON API returns runtime configs.
+
+    YAML dates, times, sets, and non-string keys would otherwise break sorting,
+    fingerprints, and WebSocket requests for the whole inspection.
+    """
+    if isinstance(value, dict):
+        return {_json_key(key): _json_compatible(child) for key, child in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_compatible(item) for item in value]
+    if isinstance(value, (set, frozenset)):
+        # Sorted so configuration fingerprints stay stable across restarts.
+        return sorted((_json_compatible(item) for item in value), key=repr)
+    if isinstance(value, (datetime.date, datetime.time)):
+        return value.isoformat()
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,9 +118,10 @@ def _read_file(path: Path) -> FileScanResult:
     for index, item in enumerate(loaded):
         if not isinstance(item, dict):
             continue
-        raw_id = item.get("id")
+        config = _json_compatible(item)
+        raw_id = config.get("id")
         config_id = str(raw_id) if raw_id is not None else None
-        automations.append(FileAutomation(index, config_id, item))
+        automations.append(FileAutomation(index, config_id, config))
     return FileScanResult(automations, [])
 
 

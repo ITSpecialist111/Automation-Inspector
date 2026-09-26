@@ -115,11 +115,7 @@ class FixtureBuilder:
                 "bedtime",
                 "Bedtime routine",
                 "on",
-                {
-                    "actions": [
-                        {"action": "light.turn_off", "target": {"entity_id": "light.living_room"}}
-                    ]
-                },
+                {"actions": [{"action": "light.turn_off", "target": {"entity_id": "all"}}]},
             ),
         ]
         snapshot = SourceSnapshot(

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import datetime
+import json
 from pathlib import Path
 
 import pytest
@@ -626,3 +628,197 @@ def test_runtime_template_target_is_informational_not_a_missing_dependency() -> 
     assert automation["targets"][0]["runtime_resolved"] is True
     assert automation["targets"][0]["dynamic_target"] == {"entity_id": ["{{ sonos_speaker }}"]}
     assert report["summary"]["missing_entities"] == 0
+
+
+REGISTRY_ID = "0123456789abcdef0123456789abcdef"
+
+
+def _single_target_snapshot(target: dict, domain: str = "automation") -> SourceSnapshot:
+    entity_id = f"{domain}.special_target"
+    action = {"action": "light.turn_off", "target": target}
+    return SourceSnapshot(
+        states=[
+            {"entity_id": entity_id, "state": "on", "attributes": {"id": "special"}},
+            {"entity_id": "light.kitchen", "state": "on", "attributes": {}},
+            {"entity_id": "light.hall", "state": "off", "attributes": {}},
+        ],
+        home_assistant_config={"version": "2026.9.1"},
+        entity_registry=[
+            {"entity_id": "light.kitchen", "id": REGISTRY_ID},
+            {"entity_id": "light.hall", "id": "fedcba9876543210fedcba9876543210"},
+        ],
+        automation_configs={entity_id: {"actions": [action]}},
+        script_configs={entity_id: {"sequence": [action]}},
+    )
+
+
+@pytest.mark.parametrize("domain", ["automation", "script"])
+@pytest.mark.parametrize(
+    ("target", "expected_entities", "entity_match"),
+    [
+        ({"entity_id": "all"}, [], "all"),
+        ({"entity_id": "ALL"}, [], "all"),
+        ({"entity_id": "none"}, [], "none"),
+        ({"entity_id": ""}, [], None),
+        ({"entity_id": REGISTRY_ID}, [("light.kitchen", "ok")], None),
+        (
+            {"entity_id": "light.kitchen, light.hall"},
+            [("light.hall", "ok"), ("light.kitchen", "ok")],
+            None,
+        ),
+        ({"entity_id": "Light.Kitchen"}, [("light.kitchen", "ok")], None),
+        ({"entity_id": "Light.kitchen"}, [("light.kitchen", "ok")], None),
+    ],
+)
+def test_home_assistant_target_selectors_do_not_break_inspection(
+    domain: str, target: dict, expected_entities: list[tuple[str, str]], entity_match: str | None
+) -> None:
+    """Regression for #39: special target values failed the entire inspection."""
+    report = build_inspection(_single_target_snapshot(target, domain), Settings())
+
+    item = report[f"{domain}s"][f"{domain}.special_target"]
+    assert [(entity["id"], entity["status"]) for entity in item["entities"]] == expected_entities
+    assert item["issue_count"] == 0
+    assert item["compatibility_issues"] == [] or all(
+        finding["severity"] == "info" for finding in item["compatibility_issues"]
+    )
+    if entity_match or expected_entities:
+        assert item["targets"][0]["entity_match"] == entity_match
+    assert report["summary"]["missing_entities"] == 0
+
+
+def test_unknown_entity_registry_target_is_a_missing_dependency() -> None:
+    unknown = "ffffffffffffffffffffffffffffffff"
+
+    report = build_inspection(_single_target_snapshot({"entity_id": unknown}), Settings())
+
+    item = report["automations"]["automation.special_target"]
+    assert item["entities"] == [
+        {
+            "id": unknown,
+            "domain": None,
+            "kind": "entity",
+            "name": "Unknown entity registry ID",
+            "state": "missing",
+            "status": "missing",
+            "ok": False,
+            "sources": ["action_target"],
+            "device_id": None,
+            "area_id": None,
+        }
+    ]
+    assert item["targets"][0]["entity_ids"] == [unknown]
+    assert item["issue_count"] == 1
+    assert report["summary"]["missing_entities"] == 1
+
+
+def test_analysis_failure_is_isolated_to_the_affected_item(monkeypatch, caplog) -> None:
+    import app.dependency_map as dependency_map
+
+    original = dependency_map.collect_entity_references
+
+    def fail_for_broken(config: dict, known_domains: set[str]) -> dict[str, set[str]]:
+        if config.get("alias") == "Broken":
+            raise ValueError("not enough values to unpack (expected 2, got 1)")
+        return original(config, known_domains)
+
+    monkeypatch.setattr(dependency_map, "collect_entity_references", fail_for_broken)
+    healthy = {"alias": "Healthy", "triggers": [{"trigger": "state", "entity_id": "light.hall"}]}
+    snapshot = SourceSnapshot(
+        states=[
+            {"entity_id": "automation.broken", "state": "on", "attributes": {"id": "broken"}},
+            {"entity_id": "automation.healthy", "state": "on", "attributes": {"id": "healthy"}},
+            {"entity_id": "light.hall", "state": "on", "attributes": {}},
+        ],
+        home_assistant_config={"version": "2026.9.1"},
+        automation_configs={
+            "automation.broken": {"alias": "Broken", "actions": []},
+            "automation.healthy": healthy,
+        },
+        warnings=["Existing source warning"],
+    )
+
+    report = build_inspection(snapshot, Settings())
+
+    broken = report["automations"]["automation.broken"]
+    assert broken["status"] == "enabled"
+    assert broken["entities"] == []
+    assert broken["issue_count"] == 1
+    assert [finding["code"] for finding in broken["compatibility_issues"]] == ["analysis_failed"]
+    assert "ValueError: not enough values to unpack" in broken["compatibility_issues"][0]["message"]
+    assert broken["config_hash"] is not None
+    healthy_item = report["automations"]["automation.healthy"]
+    assert [entity["id"] for entity in healthy_item["entities"]] == ["light.hall"]
+    assert healthy_item["issue_count"] == 0
+    assert report["summary"]["items_with_issues"] == 1
+    assert report["warnings"][0] == "Existing source warning"
+    assert "automation.broken" in report["warnings"][1]
+    assert snapshot.warnings == ["Existing source warning"]
+    assert "automation.broken" in caplog.text
+    assert "Traceback" in caplog.text
+
+
+def test_yaml_scalar_display_fields_are_json_safe() -> None:
+    config = {
+        "id": "holiday",
+        "alias": datetime.date(2026, 12, 25),
+        "mode": datetime.time(7, 30),
+        "triggers": [],
+        "actions": [],
+    }
+    snapshot = SourceSnapshot(
+        states=[],
+        home_assistant_config={"version": "2026.9.1"},
+        file_automations=[FileAutomation(0, "holiday", config)],
+    )
+
+    report = build_inspection(snapshot, Settings())
+
+    item = report["automations"]["unloaded:holiday"]
+    assert item["friendly_name"] == "2026-12-25"
+    assert item["mode"] == "07:30:00"
+    json.dumps(report, sort_keys=True)
+
+
+def test_unfingerprintable_configuration_is_isolated() -> None:
+    config = {"id": "mixed", "variables": {1: "one", "two": 2}, "actions": []}
+    snapshot = SourceSnapshot(
+        states=[],
+        home_assistant_config={"version": "2026.9.1"},
+        file_automations=[FileAutomation(0, "mixed", config)],
+    )
+
+    report = build_inspection(snapshot, Settings())
+
+    item = report["automations"]["unloaded:mixed"]
+    assert item["config_hash"] is None
+    assert [finding["code"] for finding in item["compatibility_issues"]] == ["analysis_failed"]
+
+
+def test_summary_counts_all_helpers_and_unreferenced_helpers() -> None:
+    snapshot = SourceSnapshot(
+        states=[
+            {"entity_id": "automation.uses_helper", "state": "on", "attributes": {"id": "one"}},
+            {"entity_id": "input_boolean.used", "state": "on", "attributes": {}},
+            {"entity_id": "input_boolean.unused", "state": "off", "attributes": {}},
+            {"entity_id": "timer.unused", "state": "unavailable", "attributes": {}},
+            {"entity_id": "light.not_a_helper", "state": "on", "attributes": {}},
+        ],
+        home_assistant_config={"version": "2026.9.1"},
+        entity_registry=[{"entity_id": "counter.disabled", "disabled_by": "user"}],
+        automation_configs={
+            "automation.uses_helper": {
+                "triggers": [{"trigger": "state", "entity_id": "input_boolean.used"}]
+            }
+        },
+    )
+
+    report = build_inspection(snapshot, Settings())
+
+    assert report["summary"]["helpers"] == 4
+    assert report["summary"]["unreferenced_helpers"] == 3
+    assert [helper["id"] for helper in report["unreferenced_helpers"]] == [
+        "counter.disabled",
+        "input_boolean.unused",
+        "timer.unused",
+    ]

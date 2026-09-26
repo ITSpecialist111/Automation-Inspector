@@ -11,6 +11,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from app.ha_client import HomeAssistantConnectionError
 from app.settings import Settings
 
 LOG = logging.getLogger(__name__)
@@ -87,11 +88,17 @@ class InspectionService:
                     ensure_ascii=False,
                     separators=(",", ":"),
                     sort_keys=True,
+                    default=str,
                 ).encode("utf-8")
             except Exception as exc:
-                self.last_error = f"{type(exc).__name__}: {exc}"
+                error = f"{type(exc).__name__}: {exc}"
+                repeated = error == self.last_error
+                self.last_error = error
                 if self._cache is None:
-                    raise InspectionUnavailable(self.last_error) from exc
+                    # Record each new unexpected failure's traceback for bug reports.
+                    if not repeated and not isinstance(exc, HomeAssistantConnectionError):
+                        LOG.error("Inspection failed: %s", error, exc_info=exc)
+                    raise InspectionUnavailable(error) from exc
                 LOG.exception("Inspection refresh failed; retaining last-known-good data")
                 return self._cache
 

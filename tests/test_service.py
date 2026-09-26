@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
+import json
 
 import pytest
 
-from app.service import InspectionService
+from app.ha_client import HomeAssistantConnectionError
+from app.service import InspectionService, InspectionUnavailable
 from app.settings import Settings
 
 
@@ -73,3 +76,54 @@ async def test_background_loop_retries_quickly_until_first_snapshot(monkeypatch)
         assert builder.calls == 2
     finally:
         await service.close()
+
+
+@pytest.mark.anyio
+async def test_non_json_values_do_not_block_the_report() -> None:
+    class DatedBuilder:
+        async def build(self) -> dict[str, object]:
+            return {"generated": datetime.date(2026, 9, 26)}
+
+    service = InspectionService(DatedBuilder(), Settings())
+
+    cached = await service.refresh()
+
+    assert json.loads(cached.payload) == {"generated": "2026-09-26"}
+
+
+class FailingBuilder:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    async def build(self) -> dict[str, int]:
+        raise self.error
+
+
+@pytest.mark.anyio
+async def test_unexpected_startup_failure_logs_one_traceback_per_error(caplog) -> None:
+    builder = FailingBuilder(ValueError("not enough values to unpack (expected 2, got 1)"))
+    service = InspectionService(builder, Settings())
+
+    for _ in range(2):
+        with pytest.raises(InspectionUnavailable, match="ValueError: not enough values"):
+            await service.refresh()
+    builder.error = KeyError("entity_id")
+    with pytest.raises(InspectionUnavailable, match="KeyError"):
+        await service.refresh()
+
+    tracebacks = [record for record in caplog.records if record.exc_info]
+    assert [record.exc_info[0] for record in tracebacks if record.exc_info] == [
+        ValueError,
+        KeyError,
+    ]
+
+
+@pytest.mark.anyio
+async def test_home_assistant_connection_failures_do_not_log_tracebacks(caplog) -> None:
+    error = HomeAssistantConnectionError("Home Assistant is still starting")
+    service = InspectionService(FailingBuilder(error), Settings())
+
+    with pytest.raises(InspectionUnavailable, match="still starting"):
+        await service.refresh()
+
+    assert not [record for record in caplog.records if record.exc_info]
