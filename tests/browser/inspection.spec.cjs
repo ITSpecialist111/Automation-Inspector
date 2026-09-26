@@ -15,6 +15,19 @@ async function ignoreLaundry(page) {
   await expect(page.locator("#ignored-count")).toHaveText("1");
 }
 
+async function readMetrics(page) {
+  return page.locator("#metrics .metric-card").evaluateAll((cards) => cards.map((card) => [
+    card.querySelector(".metric-label").textContent,
+    card.querySelector(".metric-value").textContent,
+    card.querySelector(".metric-note").textContent,
+  ]));
+}
+
+async function showView(page, view, firstMetric) {
+  await page.locator(`[data-view="${view}"]`).click();
+  await expect(page.locator("#metrics .metric-label").first()).toHaveText(firstMetric);
+}
+
 test("loads the real app and synthetic inspection", async ({ page }) => {
   const response = await page.goto("/");
   expect(response.headers()["content-security-policy"]).toContain("'nonce-");
@@ -38,6 +51,63 @@ test("navigates automation, script, helper, and ignored views", async ({ page })
   await expect(page.locator("#empty-state")).toBeVisible();
   await page.locator('[data-view="all"]').click();
   await expect(page.locator("#automation-list .automation-card")).toHaveCount(12);
+});
+
+test("overview metrics follow the selected view", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator("#all-count")).toHaveText("12");
+  const { summary } = await (await page.request.get("/api/v1/inspection")).json();
+  expect(await readMetrics(page)).toEqual([
+    ["Inspected items", String(summary.inspected_items), "9 automations · 3 scripts"],
+    ["Need attention", String(summary.items_with_issues), "0 ignored / 1 not loaded"],
+    ["Dependency issues", "3", `${summary.unique_entities} unique references`],
+    ["Compatibility", String(summary.compatibility_issues), "Errors and deprecations"],
+    ["Unresolved targets", String(summary.unresolved_targets), "Devices, areas, floors, or labels"],
+    ["Trace failures", String(summary.trace_failures), "Latest completed runs"],
+  ]);
+
+  await showView(page, "automation", "Automations");
+  expect(await readMetrics(page)).toEqual([
+    ["Automations", "9", "7 enabled · 1 disabled · 1 not loaded"],
+    ["Need attention", String(summary.automations_with_issues), "0 ignored / 1 not loaded"],
+    ["Dependency issues", "3", "9 unique references"],
+    ["Compatibility", "1", "Errors and deprecations"],
+    ["Unresolved targets", "0", "Devices, areas, floors, or labels"],
+    ["Trace failures", "1", "Latest completed runs"],
+  ]);
+
+  await showView(page, "script", "Scripts");
+  expect(await readMetrics(page)).toEqual([
+    ["Scripts", "3", "2 enabled · 1 unavailable"],
+    ["Need attention", String(summary.scripts_with_issues), "0 ignored / 1 unavailable"],
+    ["Dependency issues", "0", "0 unique references"],
+    ["Compatibility", "0", "Errors and deprecations"],
+    ["Unresolved targets", "0", "Devices, areas, floors, or labels"],
+    ["Trace failures", "0", "Latest completed runs"],
+  ]);
+
+  await showView(page, "helpers", "Unreferenced helpers");
+  expect(await readMetrics(page)).toEqual([
+    ["Unreferenced helpers", "2", "of 2 helpers"],
+    ["Referenced helpers", "0", "Used by inspected items"],
+    ["Healthy", "2", "Unreferenced, normal state"],
+    ["Unhealthy", "0", "Unavailable, unknown, or missing"],
+    ["Disabled", "0", "Disabled in the entity registry"],
+    ["Helper types", "2", "input_boolean 1 · timer 1"],
+  ]);
+
+  await showView(page, "all", "Inspected items");
+  await ignoreLaundry(page);
+  await showView(page, "ignored", "Items with ignores");
+  expect(await readMetrics(page)).toEqual([
+    ["Items with ignores", "1", "1 automation · 0 scripts"],
+    ["Need attention", "0", "1 ignored / 0 not loaded"],
+    ["Dependency issues", "0", "1 unique reference"],
+    ["Compatibility", "0", "Errors and deprecations"],
+    ["Unresolved targets", "0", "Devices, areas, floors, or labels"],
+    ["Trace failures", "0", "Latest completed runs"],
+  ]);
+  await expect(page.locator("#metrics .metric-card")).toHaveCount(6);
 });
 
 test("special entity target selectors inspect without inventing dependencies", async ({ page }) => {

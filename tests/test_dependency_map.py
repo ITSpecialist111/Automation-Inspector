@@ -793,3 +793,32 @@ def test_unfingerprintable_configuration_is_isolated() -> None:
     item = report["automations"]["unloaded:mixed"]
     assert item["config_hash"] is None
     assert [finding["code"] for finding in item["compatibility_issues"]] == ["analysis_failed"]
+
+
+def test_summary_counts_all_helpers_and_unreferenced_helpers() -> None:
+    snapshot = SourceSnapshot(
+        states=[
+            {"entity_id": "automation.uses_helper", "state": "on", "attributes": {"id": "one"}},
+            {"entity_id": "input_boolean.used", "state": "on", "attributes": {}},
+            {"entity_id": "input_boolean.unused", "state": "off", "attributes": {}},
+            {"entity_id": "timer.unused", "state": "unavailable", "attributes": {}},
+            {"entity_id": "light.not_a_helper", "state": "on", "attributes": {}},
+        ],
+        home_assistant_config={"version": "2026.9.1"},
+        entity_registry=[{"entity_id": "counter.disabled", "disabled_by": "user"}],
+        automation_configs={
+            "automation.uses_helper": {
+                "triggers": [{"trigger": "state", "entity_id": "input_boolean.used"}]
+            }
+        },
+    )
+
+    report = build_inspection(snapshot, Settings())
+
+    assert report["summary"]["helpers"] == 4
+    assert report["summary"]["unreferenced_helpers"] == 3
+    assert [helper["id"] for helper in report["unreferenced_helpers"]] == [
+        "counter.disabled",
+        "input_boolean.unused",
+        "timer.unused",
+    ]

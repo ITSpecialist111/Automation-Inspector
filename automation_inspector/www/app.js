@@ -221,53 +221,104 @@ function metricCard(label, value, note, tone = "") {
   return card;
 }
 
-function renderMetrics() {
-  const metrics = element("metrics");
-  metrics.replaceChildren();
-  const summary = state.data?.summary || {};
-  const itemCount = Number(summary.inspected_items || summary.automations || 0);
-  const scriptCount = Number(summary.scripts || 0);
-  const items = inspectionItems().map(([, info]) => info);
-  const attentionCount = items.filter((info) => info.issue_count > 0).length;
-  const ignoredCount = items.reduce((total, info) => total + info.ignored_count, 0);
-  const unhealthyEntities = items.flatMap((info) => info.entities).filter((entity) => !entity.ok && !entity.ignored).length;
-  metrics.append(
-    metricCard(
-      "Inspected items",
-      itemCount,
-      `${summary.automations || 0} automations · ${scriptCount} scripts`,
-    ),
-    metricCard(
-      "Need attention",
-      attentionCount,
-      `${ignoredCount} ignored / ${summary.unloaded || 0} not loaded`,
-      attentionCount ? "danger" : "",
-    ),
-    metricCard(
-      "Dependency issues",
-      unhealthyEntities,
-      `${summary.unique_entities || 0} unique references`,
-      unhealthyEntities ? "danger" : "",
-    ),
-    metricCard(
-      "Compatibility",
-      summary.compatibility_issues,
-      "Errors and deprecations",
-      summary.compatibility_issues ? "warning" : "",
-    ),
-    metricCard(
-      "Unresolved targets",
-      summary.unresolved_targets,
-      "Devices, areas, floors, or labels",
-      summary.unresolved_targets ? "warning" : "",
-    ),
-    metricCard(
-      "Trace failures",
-      summary.trace_failures,
-      "Latest completed runs",
-      summary.trace_failures ? "danger" : "",
+const METRIC_SCOPES = {
+  all: "Inspected items",
+  automation: "Automations",
+  script: "Scripts",
+  ignored: "Items with ignores",
+};
+const TARGET_GAP_FIELDS = ["missing_devices", "missing_areas", "missing_floors", "missing_labels"];
+
+function traceFailed(trace) {
+  return Boolean(
+    trace && (
+      trace.error ||
+      (trace.template_errors || []).length ||
+      ["error", "failed_max_runs"].includes(trace.script_execution)
     ),
   );
+}
+
+function countBy(values) {
+  const counts = new Map();
+  values.forEach((value) => counts.set(value, (counts.get(value) || 0) + 1));
+  return counts;
+}
+
+function plural(count, noun) {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+function statusBreakdown(items) {
+  const counts = countBy(items.map((info) => info.status));
+  return ["enabled", "disabled", "unavailable", "not_loaded"]
+    .filter((status) => counts.get(status))
+    .map((status) => `${counts.get(status)} ${STATUS_LABELS[status].toLocaleLowerCase()}`)
+    .join(" · ") || "None inspected";
+}
+
+function itemMetricCards(items) {
+  const scripts = items.filter((info) => info.item_type === "script").length;
+  const entities = items.flatMap((info) => info.entities || []);
+  const attention = items.filter((info) => info.issue_count > 0).length;
+  const ignored = items.reduce((total, info) => total + info.ignored_count, 0);
+  const inactive = state.view === "script"
+    ? `${items.filter((info) => info.status === "unavailable").length} unavailable`
+    : `${items.filter((info) => !info.loaded).length} not loaded`;
+  const unhealthy = entities.filter((entity) => !entity.ok && !entity.ignored).length;
+  const compatibility = items
+    .flatMap((info) => info.compatibility_issues || [])
+    .filter((finding) => finding.severity === "error" || finding.severity === "warning").length;
+  const unresolved = items
+    .flatMap((info) => info.targets || [])
+    .reduce((total, target) => total + TARGET_GAP_FIELDS.reduce((sum, field) => sum + (target[field] || []).length, 0), 0);
+  const traceFailures = items.filter((info) => traceFailed(info.trace)).length;
+  const breakdown = state.view === "automation" || state.view === "script"
+    ? statusBreakdown(items)
+    : `${plural(items.length - scripts, "automation")} · ${plural(scripts, "script")}`;
+  return [
+    metricCard(METRIC_SCOPES[state.view] || METRIC_SCOPES.all, items.length, breakdown),
+    metricCard("Need attention", attention, `${ignored} ignored / ${inactive}`, attention ? "danger" : ""),
+    metricCard(
+      "Dependency issues",
+      unhealthy,
+      plural(new Set(entities.map((entity) => entity.id)).size, "unique reference"),
+      unhealthy ? "danger" : "",
+    ),
+    metricCard("Compatibility", compatibility, "Errors and deprecations", compatibility ? "warning" : ""),
+    metricCard("Unresolved targets", unresolved, "Devices, areas, floors, or labels", unresolved ? "warning" : ""),
+    metricCard("Trace failures", traceFailures, "Latest completed runs", traceFailures ? "danger" : ""),
+  ];
+}
+
+function helperMetricCards() {
+  const helpers = state.data?.unreferenced_helpers || [];
+  const total = Math.max(Number(state.data?.summary?.helpers) || 0, helpers.length);
+  const statuses = countBy(helpers.map((helper) => helper.status));
+  const healthy = statuses.get("ok") || 0;
+  const disabled = statuses.get("disabled") || 0;
+  const unhealthy = helpers.length - healthy - disabled;
+  const domains = [...countBy(helpers.map((helper) => String(helper.id).split(".")[0]))]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
+  return [
+    metricCard("Unreferenced helpers", helpers.length, `of ${plural(total, "helper")}`),
+    metricCard("Referenced helpers", total - helpers.length, "Used by inspected items"),
+    metricCard("Healthy", healthy, "Unreferenced, normal state"),
+    metricCard("Unhealthy", unhealthy, "Unavailable, unknown, or missing", unhealthy ? "warning" : ""),
+    metricCard("Disabled", disabled, "Disabled in the entity registry"),
+    metricCard(
+      "Helper types",
+      domains.length,
+      domains.slice(0, 3).map(([domain, count]) => `${domain} ${count}`).join(" · ") || "None",
+    ),
+  ];
+}
+
+function renderMetrics() {
+  const cards = state.view === "helpers"
+    ? helperMetricCards()
+    : itemMetricCards(viewItems().map(([, info]) => info));
+  element("metrics").replaceChildren(...cards);
 }
 
 function alertRow(message, tone = "warning") {
@@ -614,11 +665,7 @@ function diagnosticsPanel(info) {
   if (info.restored === true) list.append(create("li", { className: "trace-line", text: "Restored placeholder: Yes" }));
   if (info.mode) list.append(create("li", { className: "trace-line", text: `Mode: ${info.mode}` }));
   if (info.trace) {
-    const hasError = Boolean(
-      info.trace.error ||
-      (info.trace.template_errors || []).length ||
-      ["error", "failed_max_runs"].includes(info.trace.script_execution),
-    );
+    const hasError = traceFailed(info.trace);
     const summary = create("li", { className: `trace-line${hasError ? " error" : ""}` });
     summary.append(
       create("strong", { text: hasError ? "Latest trace failed" : "Latest trace completed" }),

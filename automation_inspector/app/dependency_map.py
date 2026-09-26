@@ -719,9 +719,14 @@ def build_inspection(snapshot: SourceSnapshot, settings: Settings) -> dict[str, 
         for item in [*automations.values(), *scripts.values()]
         for entity in item["entities"]
     }
+    helper_ids = [
+        entity_id
+        for entity_id in sorted(set(state_map) | set(registry_map))
+        if entity_id.split(".", 1)[0] in HELPER_DOMAINS
+    ]
     unreferenced_helpers = []
-    for entity_id in sorted(set(state_map) | set(registry_map)):
-        if entity_id.split(".", 1)[0] not in HELPER_DOMAINS or entity_id in all_referenced:
+    for entity_id in helper_ids:
+        if entity_id in all_referenced:
             continue
         state = state_map.get(entity_id, {})
         attributes = state.get("attributes", {})
@@ -820,6 +825,7 @@ def build_inspection(snapshot: SourceSnapshot, settings: Settings) -> dict[str, 
             "compatibility_issues": len(compatibility_rows),
             "unresolved_targets": unresolved_targets,
             "trace_failures": trace_failures,
+            "helpers": len(helper_ids),
             "unreferenced_helpers": len(unreferenced_helpers),
             "duration_ms": round((time.perf_counter() - started) * 1000, 1),
         },
