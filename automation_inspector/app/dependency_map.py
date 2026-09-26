@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import time
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
@@ -13,8 +14,15 @@ from app import APP_VERSION
 from app.automation_file import FileAutomation, scan_automations_file
 from app.compatibility import inspect_compatibility
 from app.ha_client import HomeAssistantClient, SourceSnapshot
-from app.references import TargetUse, collect_entity_references, iter_target_uses
+from app.references import (
+    ENTITY_REGISTRY_ID_RE,
+    TargetUse,
+    collect_entity_references,
+    iter_target_uses,
+)
 from app.settings import Settings
+
+LOG = logging.getLogger(__name__)
 
 HELPER_DOMAINS = {
     "counter",
@@ -277,12 +285,19 @@ def _target_rows(
     references: dict[str, set[str]],
     state_map: Mapping[str, dict[str, Any]],
     registry_map: Mapping[str, dict[str, Any]],
+    registry_ids: Mapping[str, str],
 ) -> list[dict[str, Any]]:
     targets: list[dict[str, Any]] = []
     for source_key, config in configs:
         for use in iter_target_uses(config):
             resolution = snapshot.target_resolutions.get(use.key, {})
             direct_entities = set(use.target.get("entity_id", []))
+            # Unknown registry IDs stay visible as missing references because Home
+            # Assistant rejects them.
+            direct_entities.update(
+                registry_ids.get(registry_id, registry_id)
+                for registry_id in use.entity_registry_ids
+            )
             resolved_entities = _as_set(resolution.get("referenced_entities"))
             primary_entities = _as_set(resolution.get("primary_entities"))
             description = _description_for(snapshot, use)
@@ -320,6 +335,7 @@ def _target_rows(
                     "area_ids": use.target.get("area_id", []),
                     "floor_ids": use.target.get("floor_id", []),
                     "label_ids": use.target.get("label_id", []),
+                    "entity_match": use.entity_match,
                     "dynamic_target": use.dynamic_target,
                     "runtime_resolved": bool(use.dynamic_target),
                     "missing_devices": sorted(_as_set(resolution.get("missing_devices"))),
@@ -330,6 +346,101 @@ def _target_rows(
                 }
             )
     return targets
+
+
+def _entity_row(
+    entity_id: str,
+    sources: set[str],
+    snapshot: SourceSnapshot,
+    state_map: Mapping[str, dict[str, Any]],
+    registry_map: Mapping[str, dict[str, Any]],
+) -> dict[str, Any]:
+    entity_state = state_map.get(entity_id, {})
+    entity_attributes = entity_state.get("attributes", {})
+    if not isinstance(entity_attributes, dict):
+        entity_attributes = {}
+    registry = registry_map.get(entity_id, {})
+    value, status = _entity_status(entity_id, state_map, registry_map)
+    entity_domain, separator, object_id = entity_id.partition(".")
+    services = snapshot.service_descriptions.get(entity_domain) if separator else None
+    is_service = (
+        isinstance(services, dict)
+        and object_id in services
+        and entity_id not in state_map
+        and entity_id not in registry_map
+        and sources <= {"configuration", "template_value"}
+    )
+    if is_service:
+        value, status = "available", "ok"
+    fallback_name = (
+        "Unknown entity registry ID" if ENTITY_REGISTRY_ID_RE.fullmatch(entity_id) else entity_id
+    )
+    return {
+        "id": entity_id,
+        "domain": entity_domain if separator else None,
+        "kind": "service" if is_service else "entity",
+        "name": (
+            entity_attributes.get("friendly_name")
+            or registry.get("name")
+            or registry.get("original_name")
+            or fallback_name
+        ),
+        "state": value,
+        "status": status,
+        "ok": status == "ok",
+        "sources": sorted(sources),
+        "device_id": registry.get("device_id"),
+        "area_id": registry.get("area_id"),
+    }
+
+
+def _dependency_analysis(
+    configs: list[tuple[str, dict[str, Any]]],
+    snapshot: SourceSnapshot,
+    state_map: Mapping[str, dict[str, Any]],
+    registry_map: Mapping[str, dict[str, Any]],
+    registry_ids: Mapping[str, str],
+    known_domains: set[str],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Return one item's entity dependencies, target rows, and findings."""
+    references: dict[str, set[str]] = {}
+    compatibility: list[dict[str, Any]] = []
+    for source_key, config in configs:
+        for entity_id, sources in collect_entity_references(config, known_domains).items():
+            references.setdefault(entity_id, set()).update(sources)
+        compatibility.extend(inspect_compatibility(config))
+        compatibility.extend(
+            _validation_findings(snapshot.validations.get(source_key, {}), source_key)
+        )
+
+    targets = _target_rows(configs, snapshot, references, state_map, registry_map, registry_ids)
+    compatibility.extend(_target_findings(targets))
+    entities = [
+        _entity_row(entity_id, references[entity_id], snapshot, state_map, registry_map)
+        for entity_id in sorted(references)
+    ]
+    return entities, targets, _dedupe_findings(compatibility)
+
+
+def _config_fingerprint(configs: list[tuple[str, dict[str, Any]]]) -> str:
+    encoded = json.dumps([config for _, config in configs], sort_keys=True, default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _analysis_failure(error: Exception) -> dict[str, Any]:
+    return {
+        "code": "analysis_failed",
+        "severity": "error",
+        "path": "$",
+        "message": (
+            "Automation Inspector could not analyze this configuration "
+            f"({type(error).__name__}: {error}). Other items were inspected normally. "
+            "Please report this with the App log."
+        ),
+        "current": None,
+        "replacement": None,
+        "docs_url": None,
+    }
 
 
 def _analyze_automation(
@@ -343,62 +454,27 @@ def _analyze_automation(
     snapshot: SourceSnapshot,
     state_map: Mapping[str, dict[str, Any]],
     registry_map: Mapping[str, dict[str, Any]],
+    registry_ids: Mapping[str, str],
     known_domains: set[str],
     latest_traces: Mapping[str, dict[str, Any]],
 ) -> dict[str, Any]:
     attributes = state.get("attributes", {}) if state else {}
     if not isinstance(attributes, dict):
         attributes = {}
-    references: dict[str, set[str]] = {}
-    compatibility: list[dict[str, Any]] = []
-    for source_key, config in configs:
-        for entity_id, sources in collect_entity_references(config, known_domains).items():
-            references.setdefault(entity_id, set()).update(sources)
-        compatibility.extend(inspect_compatibility(config))
-        compatibility.extend(
-            _validation_findings(snapshot.validations.get(source_key, {}), source_key)
+    configuration_available = bool(configs) and all(
+        not source_key.startswith("attributes:") for source_key, _ in configs
+    )
+    config_hash = None
+    try:
+        if configuration_available:
+            config_hash = _config_fingerprint(configs)
+        entities, targets, compatibility = _dependency_analysis(
+            configs, snapshot, state_map, registry_map, registry_ids, known_domains
         )
-
-    targets = _target_rows(configs, snapshot, references, state_map, registry_map)
-    compatibility.extend(_target_findings(targets))
-    compatibility = _dedupe_findings(compatibility)
-
-    entities: list[dict[str, Any]] = []
-    for entity_id in sorted(references):
-        entity_state = state_map.get(entity_id, {})
-        entity_attributes = entity_state.get("attributes", {})
-        if not isinstance(entity_attributes, dict):
-            entity_attributes = {}
-        registry = registry_map.get(entity_id, {})
-        value, status = _entity_status(entity_id, state_map, registry_map)
-        entity_domain, service_name = entity_id.split(".", 1)
-        is_service = (
-            entity_id not in state_map
-            and entity_id not in registry_map
-            and references[entity_id] <= {"configuration", "template_value"}
-            and service_name in snapshot.service_descriptions.get(entity_domain, {})
-        )
-        if is_service:
-            value, status = "available", "ok"
-        entities.append(
-            {
-                "id": entity_id,
-                "domain": entity_domain,
-                "kind": "service" if is_service else "entity",
-                "name": (
-                    entity_attributes.get("friendly_name")
-                    or registry.get("name")
-                    or registry.get("original_name")
-                    or entity_id
-                ),
-                "state": value,
-                "status": status,
-                "ok": status == "ok",
-                "sources": sorted(references[entity_id]),
-                "device_id": registry.get("device_id"),
-                "area_id": registry.get("area_id"),
-            }
-        )
+    except Exception as exc:
+        # Unexpected configuration shapes must not blank the whole report (#39).
+        LOG.exception("Unable to analyze %s; other items are unaffected", key)
+        entities, targets, compatibility = [], [], [_analysis_failure(exc)]
 
     trace = _trace_info(domain, config_id, latest_traces, snapshot.trace_details)
     trace_is_issue = bool(
@@ -425,9 +501,6 @@ def _analyze_automation(
 
     primary_config = configs[0][1] if configs else {}
     restored = attributes.get("restored") is True
-    configuration_available = bool(configs) and all(
-        not source_key.startswith("attributes:") for source_key, _ in configs
-    )
     configuration_source = "attributes"
     if configuration_available:
         configuration_source = (
@@ -453,16 +526,11 @@ def _analyze_automation(
     if "use_blueprint" in primary_config:
         warnings.append("Blueprint analysis is limited to its configured inputs.")
 
-    friendly_name = (
+    # YAML scalars such as unquoted dates must not make the report unserializable.
+    friendly_name = str(
         attributes.get("friendly_name") or primary_config.get("alias") or config_id or key
     )
-    config_hash = None
-    if configuration_available:
-        config_hash = hashlib.sha256(
-            json.dumps([config for _, config in configs], sort_keys=True, default=str).encode(
-                "utf-8"
-            )
-        ).hexdigest()
+    mode = primary_config.get("mode")
     return {
         "entity_id": key if loaded else None,
         "domain": domain,
@@ -478,7 +546,7 @@ def _analyze_automation(
         "configuration_available": configuration_available,
         "configuration_source": configuration_source,
         "last_triggered": attributes.get("last_triggered"),
-        "mode": primary_config.get("mode"),
+        "mode": None if mode is None else str(mode),
         "source": "runtime" if loaded else "automations_file",
         "entities": entities,
         "targets": targets,
@@ -529,6 +597,11 @@ def build_inspection(snapshot: SourceSnapshot, settings: Settings) -> dict[str, 
         str(entry["entity_id"]): entry
         for entry in snapshot.entity_registry
         if isinstance(entry.get("entity_id"), str)
+    }
+    registry_ids = {
+        entry["id"]: entry["entity_id"]
+        for entry in snapshot.entity_registry
+        if isinstance(entry.get("id"), str) and isinstance(entry.get("entity_id"), str)
     }
     known_domains = {
         entity_id.split(".", 1)[0]
@@ -582,6 +655,7 @@ def build_inspection(snapshot: SourceSnapshot, settings: Settings) -> dict[str, 
             snapshot=snapshot,
             state_map=state_map,
             registry_map=registry_map,
+            registry_ids=registry_ids,
             known_domains=known_domains,
             latest_traces=latest_traces,
         )
@@ -614,6 +688,7 @@ def build_inspection(snapshot: SourceSnapshot, settings: Settings) -> dict[str, 
             snapshot=snapshot,
             state_map=state_map,
             registry_map=registry_map,
+            registry_ids=registry_ids,
             known_domains=known_domains,
             latest_traces=latest_traces,
         )
@@ -634,6 +709,7 @@ def build_inspection(snapshot: SourceSnapshot, settings: Settings) -> dict[str, 
             snapshot=snapshot,
             state_map=state_map,
             registry_map=registry_map,
+            registry_ids=registry_ids,
             known_domains=known_domains,
             latest_traces=latest_traces,
         )
@@ -697,6 +773,18 @@ def build_inspection(snapshot: SourceSnapshot, settings: Settings) -> dict[str, 
             or item["trace"].get("script_execution") in {"error", "failed_max_runs"}
         )
     )
+    warnings = list(snapshot.warnings)
+    failed_items = sorted(
+        key
+        for key, item in [*automations.items(), *scripts.items()]
+        if any(finding["code"] == "analysis_failed" for finding in item["compatibility_issues"])
+    )
+    if failed_items:
+        listed = ", ".join(failed_items[:5]) + (" and others" if len(failed_items) > 5 else "")
+        warnings.append(
+            f"Automation Inspector could not analyze {len(failed_items)} item(s): {listed}. "
+            "Other items were inspected normally. Please report this with the App log."
+        )
     ha_config = snapshot.home_assistant_config
     return {
         "schema_version": 2,
@@ -739,7 +827,7 @@ def build_inspection(snapshot: SourceSnapshot, settings: Settings) -> dict[str, 
         "scripts": scripts,
         "unreferenced_helpers": unreferenced_helpers,
         "orphans": [helper["id"] for helper in unreferenced_helpers],
-        "warnings": snapshot.warnings,
+        "warnings": warnings,
     }
 
 

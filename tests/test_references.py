@@ -224,3 +224,94 @@ def test_template_parser_distinguishes_local_variables_from_entities(
     references = collect_entity_references({"variables": {"result": template}}, set())
 
     assert set(references) == expected
+
+
+REGISTRY_ID = "0123456789abcdef0123456789abcdef"
+
+
+@pytest.mark.parametrize(
+    ("entity_value", "entity_ids", "registry_ids", "match"),
+    [
+        ("all", [], (), "all"),
+        ("ALL", [], (), "all"),
+        ("none", [], (), "none"),
+        ("light.kitchen, Light.Hall", ["light.hall", "light.kitchen"], (), None),
+        (["Light.Kitchen", REGISTRY_ID], ["light.kitchen"], (REGISTRY_ID,), None),
+        ("Light.kitchen", ["light.kitchen"], (), None),
+        ("light.living_Room", ["light.living_room"], (), None),
+        ("Binary_Sensor.front_door", ["binary_sensor.front_door"], (), None),
+    ],
+)
+def test_action_target_entities_follow_home_assistant_selector_rules(
+    entity_value: object,
+    entity_ids: list[str],
+    registry_ids: tuple[str, ...],
+    match: str | None,
+) -> None:
+    config = {"actions": [{"action": "light.turn_off", "target": {"entity_id": entity_value}}]}
+
+    uses = iter_target_uses(config)
+    references = collect_entity_references(config, {"light"})
+
+    assert len(uses) == 1
+    assert uses[0].target == ({"entity_id": entity_ids} if entity_ids else {})
+    assert uses[0].entity_registry_ids == registry_ids
+    assert uses[0].entity_match == match
+    assert sorted(references) == entity_ids
+    assert all("." in entity_id for entity_id in references)
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        {"entity_id": ""},
+        {"entity_id": ["", "not an entity", "light.double__underscore", "light._leading"]},
+        {"device_id": "none", "area_id": "none", "floor_id": "none", "label_id": "none"},
+        # Home Assistant only accepts lowercase registry IDs (cv.fake_uuid4_hex).
+        {"entity_id": REGISTRY_ID.upper()},
+    ],
+)
+def test_invalid_or_empty_target_selectors_are_not_sent_for_resolution(target: dict) -> None:
+    config = {"actions": [{"action": "light.turn_on", "target": target}]}
+
+    assert iter_target_uses(config) == []
+    assert all("." in entity_id for entity_id in collect_entity_references(config, {"light"}))
+
+
+def test_special_entity_selector_keeps_other_static_and_runtime_selectors() -> None:
+    config = {
+        "actions": [
+            {
+                "action": "light.turn_off",
+                "target": {"entity_id": "all", "area_id": "kitchen", "label_id": "{{ label }}"},
+            },
+            {"action": "light.turn_on", "target": {"entity_id": "{{ lights }}, light.hall"}},
+        ]
+    }
+
+    first, second = iter_target_uses(config)
+
+    assert first.target == {"area_id": ["kitchen"]}
+    assert first.dynamic_target == {"label_id": ["{{ label }}"]}
+    assert first.entity_match == "all"
+    assert second.target == {}
+    assert second.dynamic_target == {"entity_id": ["{{ lights }}, light.hall"]}
+
+
+def test_explicit_entity_fields_match_case_insensitively_without_fragments() -> None:
+    config = {
+        "triggers": [
+            {"trigger": "state", "entity_id": ["Binary_Sensor.Front_Door", "Light.kitchen"]}
+        ],
+        "conditions": [{"condition": "state", "entity_id": "light.living_Room", "state": "on"}],
+        "variables": {"chosen": "light.living_Room", "label": "Light.On at dusk"},
+        "actions": [],
+    }
+
+    references = collect_entity_references(config, {"light", "binary_sensor"})
+
+    assert references == {
+        "binary_sensor.front_door": {"explicit"},
+        "light.kitchen": {"explicit"},
+        "light.living_room": {"explicit"},
+    }

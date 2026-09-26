@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -61,3 +62,39 @@ async def test_scan_reports_malformed_yaml(tmp_path: Path) -> None:
 
     assert result.automations == []
     assert "Unable to parse" in result.warnings[0]
+
+
+@pytest.mark.anyio
+async def test_yaml_only_types_match_home_assistant_json_configs(tmp_path: Path) -> None:
+    path = tmp_path / "automations.yaml"
+    path.write_text(
+        """
+- id: 1700000000000
+  alias: 2026-12-25
+  variables:
+    3: three
+    two: 2
+    on: enabled
+    flags: !!set {a: null}
+  actions:
+    - action: input_datetime.set_datetime
+      data:
+        datetime: 2026-12-25 07:30:00
+""",
+        encoding="utf-8",
+    )
+
+    result = await scan_automations_file(path, enabled=True)
+
+    automation = result.automations[0]
+    assert automation.config_id == "1700000000000"
+    assert automation.config["id"] == 1700000000000
+    assert automation.config["alias"] == "2026-12-25"
+    assert automation.config["variables"] == {
+        "3": "three",
+        "two": 2,
+        "true": "enabled",
+        "flags": ["a"],
+    }
+    assert automation.config["actions"][0]["data"]["datetime"] == "2026-12-25T07:30:00"
+    json.dumps(automation.config, sort_keys=True, allow_nan=False)

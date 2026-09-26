@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 from websockets.asyncio.server import ServerConnection, serve
@@ -29,11 +30,20 @@ async def test_home_assistant_client_fetches_complete_websocket_snapshot() -> No
                 "action": "media_player.play_media",
                 "target": {"entity_id": "{{ sonos_speaker }}"},
             },
+            # Valid action selectors that extract_from_target's strict schema rejects.
+            {"action": "light.turn_off", "target": {"entity_id": "all", "area_id": "kitchen"}},
+            {
+                "action": "light.turn_off",
+                "target": {"entity_id": "0123456789abcdef0123456789abcdef"},
+            },
         ],
     }
     script_config = {
         "alias": "WebSocket script",
-        "sequence": [{"action": "light.turn_on", "target": {"entity_id": "light.office"}}],
+        "sequence": [
+            {"action": "light.turn_on", "target": {"entity_id": "light.office"}},
+            {"action": "light.turn_off", "target": {"entity_id": "Light.Office"}},
+        ],
     }
     received_types: list[str] = []
     resolved_targets: list[dict[str, object]] = []
@@ -250,6 +260,11 @@ async def test_home_assistant_client_fetches_complete_websocket_snapshot() -> No
         {"entity_id": ["light.office"]},
         {"entity_id": ["light.office"]},
     ]
+    assert all(
+        re.fullmatch(r"[a-z0-9_]+\.[a-z0-9_]+", entity_id)
+        for target in resolved_targets
+        for entity_id in target.get("entity_id", [])
+    )
 
 
 @pytest.mark.anyio

@@ -572,6 +572,7 @@ function targetsPanel(info) {
     );
     const chips = create("div", { className: "target-chips" });
     appendTargetChips(chips, "Entity", target.entity_ids);
+    appendTargetChips(chips, "Entities", target.entity_match ? [target.entity_match] : []);
     appendTargetChips(chips, "Device", target.device_ids);
     appendTargetChips(chips, "Area", target.area_ids);
     appendTargetChips(chips, "Floor", target.floor_ids);

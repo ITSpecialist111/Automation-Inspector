@@ -40,6 +40,15 @@ test("navigates automation, script, helper, and ignored views", async ({ page })
   await expect(page.locator("#automation-list .automation-card")).toHaveCount(12);
 });
 
+test("special entity target selectors inspect without inventing dependencies", async ({ page }) => {
+  await page.goto("/");
+  const bedtime = page.locator('[data-item-key="automation.bedtime"]');
+  await expect(bedtime.locator(".finding-count")).toHaveText("Clear");
+  await bedtime.locator("summary").click();
+  await expect(bedtime.locator(".target-chip")).toHaveText(["Entities: all"]);
+  await expect(bedtime.locator(".entity-list")).toContainText("No direct or resolved entity dependencies.");
+});
+
 test("filters and resets inspection results", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("#all-count")).toHaveText("12");

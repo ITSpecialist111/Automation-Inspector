@@ -10,7 +10,8 @@ from typing import Any
 
 from jinja2 import Environment, TemplateSyntaxError, nodes
 
-ENTITY_ID_RE = re.compile(r"(?<![a-z0-9_])([a-z_][a-z0-9_]*\.[a-z0-9_]+)(?![a-z0-9_.])")
+# Case-aware boundaries keep mixed-case text from yielding truncated fragments.
+ENTITY_ID_RE = re.compile(r"(?<![A-Za-z0-9_])([a-z_][a-z0-9_]*\.[a-z0-9_]+)(?![A-Za-z0-9_.])")
 TEMPLATE_ENTITY_RE = re.compile(
     r"(?:states|is_state|is_state_attr|state_attr|expand|has_value)\s*\(\s*['\"]"
     r"([a-z_][a-z0-9_]*\.[a-z0-9_]+)['\"]"
@@ -28,6 +29,12 @@ TEMPLATE_ENTITY_FUNCTIONS = {
 }
 
 TARGET_KEYS = ("entity_id", "device_id", "area_id", "floor_id", "label_id")
+# Home Assistant's special target selectors and validators for entity and registry IDs
+# (homeassistant.const.ENTITY_MATCH_*, homeassistant.core.VALID_ENTITY_ID, cv.fake_uuid4_hex).
+ENTITY_MATCH_ALL = "all"
+ENTITY_MATCH_NONE = "none"
+VALID_ENTITY_ID_RE = re.compile(r"(?!.+__)(?!_)[\da-z_]+(?<!_)\.(?!_)[\da-z_]+(?<!_)")
+ENTITY_REGISTRY_ID_RE = re.compile(r"[0-9a-f]{32}")
 COMPONENT_KEYS = {"trigger", "platform", "condition", "action", "service"}
 ENTITY_VALUE_KEYS = {
     "entity_id",
@@ -107,12 +114,23 @@ def _as_strings(value: Any) -> list[str]:
 
 
 def normalize_target(value: Any) -> dict[str, list[str]]:
-    """Normalize a target to sorted lists accepted by the WebSocket API."""
+    """Normalize a target to sorted lists, expanding selectors as Home Assistant does.
+
+    Static entity strings may be comma-separated. A scalar ``none`` device, area, floor,
+    or label selector selects nothing.
+    """
     if not isinstance(value, dict):
         return {}
     normalized: dict[str, list[str]] = {}
     for key in TARGET_KEYS:
-        values = sorted(set(_as_strings(value.get(key))))
+        raw = value.get(key)
+        if key != "entity_id" and isinstance(raw, str) and raw.strip() == ENTITY_MATCH_NONE:
+            continue
+        if key == "entity_id" and isinstance(raw, str) and not _is_template(raw):
+            items = raw.split(",")
+        else:
+            items = _as_strings(raw)
+        values = sorted({item.strip() for item in items if item.strip()})
         if values:
             normalized[key] = values
     return normalized
@@ -199,13 +217,43 @@ def _partition_target(
     return static, dynamic
 
 
+def _classify_target_entities(values: list[str]) -> tuple[list[str], tuple[str, ...], str | None]:
+    """Split static entity selectors into entity IDs, registry IDs, and all/none.
+
+    Mirrors Home Assistant's action target schema: entity IDs are case-insensitive,
+    while registry entry IDs must be lowercase. Invalid values are dropped because
+    Home Assistant's own validation reports them.
+    """
+    entity_ids: set[str] = set()
+    registry_ids: set[str] = set()
+    match: str | None = None
+    for value in values:
+        candidate = value.lower()
+        if candidate in {ENTITY_MATCH_ALL, ENTITY_MATCH_NONE}:
+            match = candidate
+        elif VALID_ENTITY_ID_RE.fullmatch(candidate):
+            entity_ids.add(candidate)
+        elif ENTITY_REGISTRY_ID_RE.fullmatch(value):
+            registry_ids.add(value)
+    return sorted(entity_ids), tuple(sorted(registry_ids)), match
+
+
 @dataclass(frozen=True, slots=True)
 class TargetUse:
+    """A target selection and the trigger, condition, or action that owns it.
+
+    ``target`` holds only static selectors accepted by ``extract_from_target``.
+    Registry entry IDs and Home Assistant's ``all``/``none`` entity selectors are
+    kept separately because that command rejects them.
+    """
+
     path: str
     kind: str
     component: str | None
     target: dict[str, list[str]]
     dynamic_target: dict[str, list[str]]
+    entity_registry_ids: tuple[str, ...] = ()
+    entity_match: str | None = None
 
     @property
     def key(self) -> str:
@@ -225,8 +273,12 @@ def iter_target_uses(config: dict[str, Any]) -> list[TargetUse]:
             return
 
         normalized_target = normalize_target(value.get("target"))
-        target, dynamic_target = _partition_target(normalized_target)
-        if target or dynamic_target:
+        static_target, dynamic_target = _partition_target(normalized_target)
+        entity_ids, registry_ids, entity_match = _classify_target_entities(
+            static_target.pop("entity_id", [])
+        )
+        target = {"entity_id": entity_ids, **static_target} if entity_ids else static_target
+        if target or dynamic_target or registry_ids or entity_match:
             if isinstance(value.get("trigger", value.get("platform")), str):
                 kind = "trigger"
                 component = str(value.get("trigger", value.get("platform")))
@@ -239,7 +291,17 @@ def iter_target_uses(config: dict[str, Any]) -> list[TargetUse]:
             else:
                 kind = "target"
                 component = None
-            uses.append(TargetUse(f"{path}.target", kind, component, target, dynamic_target))
+            uses.append(
+                TargetUse(
+                    f"{path}.target",
+                    kind,
+                    component,
+                    target,
+                    dynamic_target,
+                    registry_ids,
+                    entity_match,
+                )
+            )
 
         for key, child in value.items():
             if key != "target":
@@ -273,7 +335,8 @@ def collect_entity_references(
                     add(entity_id, "template" if entity_id in explicit else "template_value")
             return
         explicit_key = key in ENTITY_VALUE_KEYS and not templated
-        for entity_id in ENTITY_ID_RE.findall(value):
+        # Home Assistant lowercases entity IDs in explicit entity fields (cv.entity_id).
+        for entity_id in ENTITY_ID_RE.findall(value.lower() if explicit_key else value):
             domain = entity_id.split(".", 1)[0]
             if explicit_key or domain in domains:
                 add(entity_id, "explicit" if explicit_key else "configuration")
