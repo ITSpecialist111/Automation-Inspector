@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.3 - 2026-10-02
+
+### Changed
+
+- Update the runtime web server, Uvicorn, from 0.52.4 to 0.54.0 (#43). The new releases add opt-in HTTP/2 features that the App does not enable; the App still serves HTTP/1.1 with the same options.
+- Update the bundled Lucide icons from 1.41.0 to 1.48.0 (#44). The icons used by the App are unchanged apart from their license header.
+- Build and publish the App image with Home Assistant builder actions 2026.09.0 (#42).
+- Update development tooling: AnyIO 4.15.1, Ruff 0.16.9, and types-PyYAML 6.0.12.20260906.
+
+### Compatibility
+
+- Keep schema version 2 with no report, App option, or permission changes, and no Home Assistant writes.
+
 ## 1.2.2 - 2026-09-26
 
 ### Fixed
