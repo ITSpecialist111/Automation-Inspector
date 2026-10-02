@@ -1,9 +1,9 @@
 -r automation_inspector/requirements.txt
 
-anyio==4.14.2
+anyio==4.15.1
 httpx==0.28.1
 mypy==2.3.1
 pytest==9.1.1
 pytest-cov==7.1.0
-ruff==0.16.5
-types-PyYAML==6.0.12.20260815
+ruff==0.16.9
+types-PyYAML==6.0.12.20260906
