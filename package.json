@@ -7,10 +7,10 @@
     "assets": "node tools/vendor-assets.mjs"
   },
   "devDependencies": {
-    "@axe-core/playwright": "4.13.0",
+    "@axe-core/playwright": "4.14.0",
     "@fontsource-variable/dm-sans": "5.3.0",
-    "@fontsource-variable/source-code-pro": "5.3.0",
-    "@playwright/test": "1.63.0",
-    "lucide-static": "1.48.0"
+    "@fontsource-variable/source-code-pro": "5.3.1",
+    "@playwright/test": "1.64.1",
+    "lucide-static": "1.61.0"
   }
 }
