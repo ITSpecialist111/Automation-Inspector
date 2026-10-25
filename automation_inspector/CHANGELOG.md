@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.4 - 2026-10-25
+
+### Changed
+
+- Update the App's web framework, FastAPI, from 0.141.1 to 0.162.0, and the Home Assistant WebSocket client, websockets, from 17.1 to 17.3.
+- Update the bundled Lucide icons from 1.48.0 to 1.61.0. The icons used by the App are unchanged apart from their license header.
+- Update development and test tooling: mypy 2.4.0, Ruff 0.17.2, Playwright 1.64.1, axe-core for Playwright 4.14.0, and Source Code Pro 5.3.1.
+
+### Compatibility
+
+- Keep schema version 2 with no report, App option, or permission changes, and no Home Assistant writes.
+
 ## 1.2.3 - 2026-10-02
 
 ### Changed
