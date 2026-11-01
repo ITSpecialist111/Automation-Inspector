@@ -2,8 +2,8 @@
 
 anyio==4.15.1
 httpx==0.28.1
-mypy==2.4.0
-pytest==9.1.1
+mypy==2.4.1
+pytest==9.2.0
 pytest-cov==7.1.0
-ruff==0.17.2
+ruff==0.17.3
 types-PyYAML==6.0.12.20260906
